@@ -8,7 +8,6 @@ const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 // ── INIT ─────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
-  // Check if user already set up
   const saved = localStorage.getItem('dishduty_user');
   if (saved) {
     currentUser = saved;
@@ -35,7 +34,13 @@ function showMain() {
   document.getElementById('setup-screen').classList.remove('active');
   document.getElementById('main-screen').classList.add('active');
   document.getElementById('header-user').textContent = currentUser;
-  initFirebase();
+
+  // Only init Firebase once
+  if (!db) {
+    initFirebase();
+  } else {
+    render();
+  }
 }
 
 function switchUser() {
@@ -52,7 +57,6 @@ function switchUser() {
 // ── FIREBASE ─────────────────────────────────────────────────────────────────
 function initFirebase() {
   try {
-    // Check if config is filled in
     if (firebaseConfig.apiKey === 'PASTE_YOUR_API_KEY_HERE') {
       setSyncState('err', 'no config');
       showToast('Add your Firebase config to firebase-config.js');
@@ -66,11 +70,15 @@ function initFirebase() {
     db = firebase.database();
     appRef = db.ref('dishduty');
 
-    // Real-time listener — fires on every change from any device
+    // Real-time listener — fires instantly on any device when data changes
     appRef.on('value', snap => {
       const data = snap.val();
       if (data) {
         state = data;
+        // Ensure arrays are arrays (Firebase can turn empty arrays into null)
+        if (!state.members) state.members = [];
+        if (!state.completions) state.completions = {};
+        if (!state.schedule) state.schedule = {};
       }
       setSyncState('live', 'live');
       render();
@@ -79,7 +87,6 @@ function initFirebase() {
       setSyncState('err', 'error');
     });
 
-    // Detect connection state
     db.ref('.info/connected').on('value', snap => {
       if (snap.val() === true) {
         setSyncState('live', 'live');
@@ -121,17 +128,20 @@ function fmtTime(ts) {
 // ── SCHEDULE ─────────────────────────────────────────────────────────────────
 function buildSchedule() {
   if (!state.members || state.members.length === 0) { state.schedule = {}; return; }
+
+  // Always rebuild the full schedule so new members get distributed
+  state.schedule = {};
+
   const base = new Date();
-  for (let i = -14; i <= 14; i++) {
+  for (let i = -14; i <= 30; i++) {
     const d = new Date(base);
     d.setDate(base.getDate() + i);
     const k = dateKey(d);
-    if (!state.schedule[k]) {
-      // Deterministic round-robin based on date
-      const seed = k.replace(/-/g, '');
-      const n = Array.from(seed).reduce((a, c) => a + c.charCodeAt(0), 0);
-      state.schedule[k] = state.members[n % state.members.length].id;
-    }
+
+    // Simple index-based round robin: day index from a fixed epoch
+    const epoch = new Date('2024-01-01');
+    const dayIndex = Math.floor((d - epoch) / 86400000);
+    state.schedule[k] = state.members[((dayIndex % state.members.length) + state.members.length) % state.members.length].id;
   }
 }
 
@@ -152,7 +162,7 @@ function addMember() {
   }
   const id = 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
   state.members.push({ id, name, addedAt: Date.now() });
-  buildSchedule();
+  buildSchedule(); // Rebuild entire schedule with new member included
   save();
   render();
   input.value = '';
@@ -175,7 +185,7 @@ function markDone() {
   const assignee = getAssignee(k);
   if (!assignee) return;
 
-  // Anti-cheat: current user must match assignee name (case-insensitive)
+  // Anti-cheat: your saved name must match today's assignee
   if (assignee.name.toLowerCase() !== currentUser.toLowerCase()) {
     showToast("That's not your turn! 👀");
     return;
@@ -194,7 +204,6 @@ function markDone() {
 
 // ── RENDER ───────────────────────────────────────────────────────────────────
 function render() {
-  buildSchedule();
   renderHero();
   renderWeek();
   renderMembers();
@@ -202,7 +211,6 @@ function render() {
 }
 
 function renderHero() {
-  const el = document.getElementById('hero-section');
   const action = document.getElementById('hero-action');
   const k = todayKey();
   const assignee = getAssignee(k);
