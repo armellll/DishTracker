@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dish Duty</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;700;900&family=Archivo+Narrow:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- SETUP SCREEN -->
+  <div id="setup-screen" class="screen active">
+    <div class="setup-inner">
+      <div class="setup-icon">🍽</div>
+      <h1>Dish Duty</h1>
+      <p class="setup-sub">No more arguments about whose turn it is.</p>
+      <div class="setup-card">
+        <label class="field-label">Your name</label>
+        <input id="setup-name" type="text" placeholder="e.g. Maria" maxlength="25" autocomplete="off" />
+        <button id="setup-btn" onclick="setupDone()">Let's go</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN SCREEN -->
+  <div id="main-screen" class="screen">
+
+    <header>
+      <div class="header-left">
+        <span class="header-icon">🍽</span>
+        <span class="header-title">Dish Duty</span>
+      </div>
+      <div class="header-right">
+        <div class="sync-badge" id="sync-badge">
+          <span class="sync-dot" id="sync-dot"></span>
+          <span id="sync-text">connecting</span>
+        </div>
+        <button class="header-user" id="header-user" onclick="switchUser()"></button>
+      </div>
+    </header>
+
+    <main>
+
+      <!-- TODAY HERO -->
+      <section class="hero-section" id="hero-section">
+        <div class="hero-date" id="hero-date"></div>
+        <div class="hero-label">On duty today</div>
+        <div class="hero-name" id="hero-name">—</div>
+        <div id="hero-action"></div>
+      </section>
+
+      <!-- WEEK VIEW -->
+      <section class="card-section">
+        <div class="section-title">This week</div>
+        <div id="week-list"></div>
+      </section>
+
+      <!-- MEMBERS -->
+      <section class="card-section">
+        <div class="section-title">Household</div>
+        <div id="member-list"></div>
+        <div class="add-row" id="add-member-row">
+          <input id="member-input" type="text" placeholder="Add someone…" maxlength="25" autocomplete="off" />
+          <button class="add-btn" onclick="addMember()">Add</button>
+        </div>
+      </section>
+
+      <!-- HISTORY -->
+      <section class="card-section">
+        <div class="section-title">Recent history</div>
+        <div id="history-list"></div>
+      </section>
+
+    </main>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Firebase v9 compat -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
