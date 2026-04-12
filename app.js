@@ -335,23 +335,20 @@ function markDone() {
 // ── EDIT COMPLETION ───────────────────────────────────────────────────────────
 function undoCompletion(dateStr) {
   if (!state.completions || !state.completions[dateStr]) return;
-  const comp = state.completions[dateStr];
-
-  // Only the person who marked it, or if it was marked on this device, can undo
-  const me = state.members.find(m => m.deviceId === myDeviceId);
-  if (!me) { showToast('You are not registered on this device'); return; }
-
-  const isOwner = comp.memberId === me.id;
-  if (!isOwner) {
-    showToast("You can only undo your own completions");
-    return;
-  }
-
-  if (!confirm('Undo this completion for ' + fmtDate(dateStr) + '?')) return;
+  if (!confirm('Undo completion for ' + fmtDate(dateStr) + '?')) return;
   delete state.completions[dateStr];
   save();
   render();
   showToast('Completion removed');
+}
+
+function canUndoEntry(comp) {
+  // Today's entry — either person can undo (admin-style for 2-person household)
+  if (!comp) return false;
+  const me = state.members.find(m => m.deviceId === myDeviceId);
+  if (!me) return false;
+  // Can undo if: it's your entry by memberId, OR by name match (covers old entries before device lock)
+  return comp.memberId === me.id || comp.name.toLowerCase() === myName.toLowerCase();
 }
 
 // ── RENDER ───────────────────────────────────────────────────────────────────
@@ -378,8 +375,6 @@ function renderHero() {
     ? `<div class="debt-badge">⚠ Makeup wash — skipped on ${fmtDate(entry.originalDate)}</div>` : '';
 
   if (comp) {
-    const me = state.members.find(m => m.deviceId === myDeviceId);
-    const canUndo = me && comp.memberId === me.id;
     action.innerHTML = `${debtBadge}
       <div class="done-status">
         <span class="done-check">✓</span>
@@ -387,7 +382,7 @@ function renderHero() {
           <div class="done-text">Done by ${comp.name}</div>
           <div class="done-time">${fmtTime(comp.timestamp)}</div>
         </div>
-        ${canUndo ? `<button class="undo-btn" onclick="undoCompletion('${k}')">Undo</button>` : ''}
+        ${canUndoEntry(comp) ? `<button class="undo-btn" onclick="undoCompletion('${k}')">Undo</button>` : ''}
       </div>`;
   } else if (assignee) {
     const me = state.members.find(m => m.deviceId === myDeviceId);
@@ -470,10 +465,8 @@ function renderHistory() {
     el.innerHTML = '<div class="empty-msg">No completed tasks yet</div>';
     return;
   }
-  const me = state.members.find(m => m.deviceId === myDeviceId);
-  const sorted = Object.entries(state.completions).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 20);
   el.innerHTML = sorted.map(([k, c]) => {
-    const canUndo = me && c.memberId === me.id;
+    const canUndo = canUndoEntry(c);
     return `<div class="history-row">
       <div class="history-date">${fmtDate(k)}</div>
       <div class="history-who">${c.name}</div>
