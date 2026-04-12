@@ -28,9 +28,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('setup-name').addEventListener('keydown', e => {
     if (e.key === 'Enter') setupDone();
   });
-  document.getElementById('member-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') addMember();
-  });
+
 });
 
 function setupDone() {
@@ -116,10 +114,10 @@ function autoAddSelf() {
     return;
   }
 
-  // Not in the list at all — add them
+  // Not in the list at all — add them and extend the queue
   const id = 'mbr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
   state.members.push({ id, name: myName, deviceId: myDeviceId, addedAt: Date.now() });
-  interleaveNewMember(id);
+  extendQueue();
   save();
 }
 
@@ -261,37 +259,7 @@ function getAssigneeForDate(dateStr) {
 }
 
 // ── MEMBERS ──────────────────────────────────────────────────────────────────
-function addMember() {
-  const input = document.getElementById('member-input');
-  const name = input.value.trim();
-  if (!name) return;
-  if (!state.members) state.members = [];
-  if (state.members.find(m => m.name.toLowerCase() === name.toLowerCase())) {
-    showToast('Name already added'); return;
-  }
-  const id = 'mbr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-  // No deviceId — they'll claim it when they open the app and set their name
-  state.members.push({ id, name, deviceId: null, addedAt: Date.now() });
-  interleaveNewMember(id);
-  save();
-  render();
-  input.value = '';
-  showToast(name + ' added — they need to open the app and enter this name');
-}
 
-function interleaveNewMember(newId) {
-  const tk = todayKey();
-  const future = state.queue.filter(e => e.date >= tk).sort((a, b) => a.date.localeCompare(b.date));
-  const past = state.queue.filter(e => e.date < tk);
-  if (future.length === 0) { extendQueue(); return; }
-
-  const firstIdx = state.members.findIndex(m => m.id === future[0].memberId);
-  const rebuilt = future.map((entry, i) => {
-    const idx = ((firstIdx + i) % state.members.length + state.members.length) % state.members.length;
-    return { ...entry, memberId: state.members[idx].id };
-  });
-  state.queue = [...past, ...rebuilt];
-}
 
 function removeMember(id) {
   const m = state.members.find(m => m.id === id);
@@ -448,7 +416,7 @@ function renderMembers() {
     const registered = !!m.deviceId;
     return `<div class="member-row">
       <div class="member-avatar av-${i % 6}">${m.name[0].toUpperCase()}</div>
-      <div class="member-name">${m.name}${!registered ? ' <span class="unregistered">not joined yet</span>' : ''}</div>
+      <div class="member-name">${m.name}</div>
       <div class="member-stats">
         <span class="member-count">${counts[m.id] || 0} done</span>
         ${debt > 0 ? `<span class="member-debt">${debt} owed</span>` : ''}
