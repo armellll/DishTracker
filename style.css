@@ -445,3 +445,46 @@ main {
   background: var(--red-bg);
   color: var(--red);
 }
+
+.undo-btn {
+  background: rgba(248,113,113,0.12);
+  color: var(--red);
+  border: 1px solid rgba(248,113,113,0.25);
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--ff);
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.undo-btn:hover { background: rgba(248,113,113,0.22); }
+.undo-btn-sm {
+  background: transparent;
+  color: var(--red);
+  border: none;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--ff);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.undo-btn-sm:hover { opacity: 1; }
+.unregistered {
+  font-size: 10px;
+  color: var(--text3);
+  font-style: italic;
+  font-weight: 400;
+}
+.done-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--green-bg);
+  border: 1px solid rgba(74,222,128,0.2);
+  border-radius: var(--radius-sm);
+}
