@@ -16,7 +16,6 @@ function getOrCreateDeviceId() {
   }
   return id;
 }
-
 function getLockedName() { return localStorage.getItem('dishduty_locked_name'); }
 function lockName(name) { localStorage.setItem('dishduty_locked_name', name); }
 
@@ -65,11 +64,11 @@ function initFirebase() {
       const data = snap.val();
       if (data) {
         state = data;
-        if (!state.members) state.members = [];
+        if (!Array.isArray(state.members)) state.members = [];
         if (!state.completions) state.completions = {};
-        if (!state.queue) state.queue = [];
+        if (!Array.isArray(state.queue)) state.queue = [];
       }
-      processOverdueDays();
+      extendQueue();
       setSyncState('live', 'live');
       render();
     }, err => { console.error(err); setSyncState('err', 'error'); });
@@ -84,11 +83,11 @@ function initFirebase() {
   }
 }
 
-function save() {
+function save(callback) {
   if (!appRef) return;
   setSyncState('saving', 'saving');
   appRef.set(state)
-    .then(() => setSyncState('live', 'live'))
+    .then(() => { setSyncState('live', 'live'); if (callback) callback(); })
     .catch(e => { console.error(e); setSyncState('err', 'error'); });
 }
 
@@ -109,58 +108,88 @@ function addDays(dateStr, n) {
 }
 
 // ── QUEUE SYSTEM ──────────────────────────────────────────────────────────────
-// The queue is a flat ordered list of { date, memberId, isDebt? }.
-// When someone misses a day, processOverdueDays() detects it and re-inserts
-// their entry at the front of the future queue, pushing everyone else back by 1 day.
+//
+// The queue is a simple ordered array of { date, memberId, isDebt }.
+// Rules:
+//   1. It is ALWAYS extended so it covers at least 30 days from today.
+//   2. The next person in the queue is always (lastPersonIndex + 1) % members.
+//   3. If a past day has no completion, that person owes a wash.
+//      Their owed turn is inserted RIGHT BEFORE whoever is next in the future queue.
+//   4. We NEVER recalculate old dates — only append to the future.
 
-function rebuildQueue() {
+function getNextMemberIndex(afterMemberId) {
+  if (!state.members.length) return 0;
+  const idx = state.members.findIndex(m => m.id === afterMemberId);
+  if (idx === -1) return 0;
+  return (idx + 1) % state.members.length;
+}
+
+function extendQueue() {
   if (!state.members || state.members.length === 0) { state.queue = []; return; }
 
   const tk = todayKey();
-  const epoch = new Date('2024-01-01T12:00:00');
-  const todayDate = new Date(tk + 'T12:00:00');
-  const startIdx = Math.floor((todayDate - epoch) / 86400000);
+  const targetEnd = addDays(tk, 30);
 
-  // Keep completed past entries, rebuild everything from today forward
-  const pastDone = (state.queue || []).filter(e => e.date < tk && state.completions && state.completions[e.date]);
+  // Step 1: figure out what the last date in the queue is
+  const sorted = [...(state.queue || [])].sort((a, b) => a.date.localeCompare(b.date));
+  let lastDate = sorted.length ? sorted[sorted.length - 1].date : addDays(tk, -1);
+  let lastMemberId = sorted.length ? sorted[sorted.length - 1].memberId : state.members[state.members.length - 1].id;
 
-  const future = [];
-  let offset = 0;
-  for (let i = 0; i <= 30; i++) {
-    const k = addDays(tk, i);
-    const memberIdx = ((startIdx + offset) % state.members.length + state.members.length) % state.members.length;
-    future.push({ date: k, memberId: state.members[memberIdx].id, isDebt: false });
-    offset++;
+  // Step 2: check for past missed turns and insert debts if not already there
+  handleMissedTurns();
+
+  // Step 3: append future dates until we reach targetEnd
+  let fillFrom = addDays(lastDate, 1);
+  let nextIdx = getNextMemberIndex(lastMemberId);
+
+  // Re-read sorted after handleMissedTurns may have changed the queue
+  const sorted2 = [...(state.queue || [])].sort((a, b) => a.date.localeCompare(b.date));
+  if (sorted2.length) {
+    const last = sorted2[sorted2.length - 1];
+    fillFrom = addDays(last.date, 1);
+    nextIdx = getNextMemberIndex(last.memberId);
   }
 
-  state.queue = [...pastDone, ...future];
+  let changed = false;
+  while (fillFrom <= targetEnd) {
+    if (!state.queue.find(e => e.date === fillFrom)) {
+      state.queue.push({ date: fillFrom, memberId: state.members[nextIdx].id, isDebt: false });
+      nextIdx = (nextIdx + 1) % state.members.length;
+      changed = true;
+    }
+    fillFrom = addDays(fillFrom, 1);
+  }
+
+  if (changed) save();
 }
 
-function processOverdueDays() {
-  if (!state.members || !state.members.length) return;
-
+function handleMissedTurns() {
   const tk = todayKey();
-  let needsSave = false;
 
-  // Find past days with no completion that are in the queue
+  // Find past queue entries with no completion (genuinely missed, not already a debt)
   const missed = (state.queue || []).filter(e =>
-    e.date < tk && !(state.completions && state.completions[e.date]) && !e.isDebt
+    e.date < tk &&
+    !e.isDebt &&
+    !(state.completions && state.completions[e.date])
   );
 
   if (missed.length === 0) return;
 
-  // Remove missed entries from queue (they'll be re-inserted as debts)
-  state.queue = state.queue.filter(e => !(e.date < tk && !(state.completions && state.completions[e.date]) && !e.isDebt));
+  // Remove them from the queue (we'll re-insert as debts)
+  state.queue = state.queue.filter(e =>
+    !(e.date < tk && !e.isDebt && !(state.completions && state.completions[e.date]))
+  );
 
-  // Get the future queue from today onward
+  // Get future entries sorted
   let future = state.queue.filter(e => e.date >= tk).sort((a, b) => a.date.localeCompare(b.date));
 
-  // Insert each missed person's debt at the front of the future queue
-  missed.forEach(m => {
-    future.unshift({ date: '__pending__', memberId: m.memberId, isDebt: true, originalDate: m.date });
+  // Insert each missed person as a debt entry at the FRONT of future
+  // (so they wash first before the normal rotation continues)
+  missed.reverse().forEach(m => {
+    future.unshift({ date: '__reassign__', memberId: m.memberId, isDebt: true, originalDate: m.date });
   });
 
-  // Reassign real dates: go through the future list and assign the next available date
+  // Now reassign actual dates to every future entry in order
   let datePtr = tk;
   const reassigned = [];
   future.forEach(entry => {
@@ -168,21 +197,9 @@ function processOverdueDays() {
     datePtr = addDays(datePtr, 1);
   });
 
-  // Extend to 30 days if needed
-  while (datePtr <= addDays(tk, 30)) {
-    const epoch = new Date('2024-01-01T12:00:00');
-    const d = new Date(datePtr + 'T12:00:00');
-    const dayIdx = Math.floor((d - epoch) / 86400000);
-    const memberIdx = ((dayIdx) % state.members.length + state.members.length) % state.members.length;
-    reassigned.push({ date: datePtr, memberId: state.members[memberIdx].id, isDebt: false });
-    datePtr = addDays(datePtr, 1);
-  }
-
-  const pastDone = state.queue.filter(e => e.date < tk);
-  state.queue = [...pastDone, ...reassigned];
-  needsSave = true;
-
-  if (needsSave) save();
+  // Put it all back together
+  const pastEntries = state.queue.filter(e => e.date < tk);
+  state.queue = [...pastEntries, ...reassigned];
 }
 
 function getQueueEntry(dateStr) {
@@ -207,11 +224,38 @@ function addMember() {
   const id = 'mbr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
   state.members.push({ id, name, deviceId: null, addedAt: Date.now() });
   autoRegisterDevice();
-  rebuildQueue();
+
+  // New member gets inserted into the future queue fairly:
+  // find their first appearance in the queue and interleave them
+  interleaveNewMember(id);
+
   save();
   render();
   input.value = '';
   showToast(name + ' added to the rotation');
+}
+
+function interleaveNewMember(newId) {
+  // Clear future queue and rebuild it including the new member in round-robin
+  const tk = todayKey();
+  const future = state.queue.filter(e => e.date >= tk).sort((a, b) => a.date.localeCompare(b.date));
+  const past = state.queue.filter(e => e.date < tk);
+
+  // Figure out who was going next before new member was added (without new member)
+  // Just rebuild the full future rotation from today with all members including new one
+  if (future.length === 0) { extendQueue(); return; }
+
+  // Find who goes first today (keep their slot), then rotate through all members including new
+  const firstEntry = future[0];
+  const firstIdx = state.members.findIndex(m => m.id === firstEntry.memberId);
+
+  const rebuilt = [];
+  for (let i = 0; i < future.length; i++) {
+    const idx = ((firstIdx + i) % state.members.length + state.members.length) % state.members.length;
+    rebuilt.push({ ...future[i], memberId: state.members[idx].id });
+  }
+
+  state.queue = [...past, ...rebuilt];
 }
 
 function autoRegisterDevice() {
@@ -225,8 +269,19 @@ function removeMember(id) {
   if (!m) return;
   if (!confirm('Remove ' + m.name + ' from the rotation?')) return;
   state.members = state.members.filter(m => m.id !== id);
-  state.queue = (state.queue || []).filter(e => e.memberId !== id);
-  rebuildQueue();
+
+  // Remove their entries from queue and close the date gaps
+  const tk = todayKey();
+  const past = state.queue.filter(e => e.date < tk);
+  let future = state.queue.filter(e => e.date >= tk && e.memberId !== id)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  // Reassign dates so there are no gaps
+  let datePtr = tk;
+  future = future.map(e => { const entry = { ...e, date: datePtr }; datePtr = addDays(datePtr, 1); return entry; });
+
+  state.queue = [...past, ...future];
+  extendQueue();
   save();
   render();
 }
@@ -237,32 +292,26 @@ function markDone() {
   const assignee = getAssigneeForDate(k);
   if (!assignee) return;
 
-  // Find my member record
   const me = state.members.find(m => m.name.toLowerCase() === myName.toLowerCase());
-  if (!me) { showToast("Add yourself to the member list first"); return; }
+  if (!me) { showToast('Add yourself to the member list first'); return; }
 
-  // Lock device to member on first mark
+  // Lock device to this member on first mark
   if (!me.deviceId) {
     me.deviceId = myDeviceId;
   } else if (me.deviceId !== myDeviceId) {
-    // Someone else's device is trying to use this name
-    showToast("This name is locked to another device! 🚫");
+    showToast('This name is registered on another device! 🚫');
     return;
   }
 
-  // Must be your turn
   if (assignee.id !== me.id) {
     showToast("It's " + assignee.name + "'s turn today! 👀");
     return;
   }
 
   if (!state.completions) state.completions = {};
-  state.completions[k] = {
-    memberId: me.id,
-    name: me.name,
-    timestamp: Date.now()
-  };
+  state.completions[k] = { memberId: me.id, name: me.name, timestamp: Date.now() };
 
+  // The queue already has tomorrow assigned correctly — just save and re-render
   save();
   render();
   showToast('Dishes marked done! ✓');
@@ -289,7 +338,7 @@ function renderHero() {
     assignee ? assignee.name : (state.members && state.members.length ? '—' : 'Add members below');
 
   const debtBadge = (entry && entry.isDebt)
-    ? `<div class="debt-badge">⚠ Makeup wash — was skipped on ${fmtDate(entry.originalDate)}</div>` : '';
+    ? `<div class="debt-badge">⚠ Makeup wash — skipped on ${fmtDate(entry.originalDate)}</div>` : '';
 
   if (comp) {
     action.innerHTML = `${debtBadge}
@@ -406,5 +455,5 @@ function showToast(msg) {
 
 setInterval(() => {
   const n = new Date();
-  if (n.getHours() === 0 && n.getMinutes() === 0) { processOverdueDays(); render(); }
+  if (n.getHours() === 0 && n.getMinutes() === 0) { extendQueue(); render(); }
 }, 60000);
