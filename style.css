@@ -488,3 +488,47 @@ main {
   border: 1px solid rgba(74,222,128,0.2);
   border-radius: var(--radius-sm);
 }
+
+/* LANDING */
+.center-wrap { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px; max-width:380px; margin:0 auto; text-align:center; animation:fadeUp .4s ease both; }
+.big-icon { font-size:52px; margin-bottom:16px; }
+.center-wrap h1 { font-size:40px; font-weight:900; letter-spacing:-2px; margin-bottom:8px; }
+.tagline { font-size:15px; color:var(--text2); margin-bottom:28px; font-family:var(--ff2); line-height:1.5; }
+.landing-card { background:var(--surface); border:1px solid var(--border2); border-radius:var(--radius); padding:24px; width:100%; text-align:left; display:flex; flex-direction:column; gap:10px; }
+.btn-primary { width:100%; padding:14px; background:var(--accent); color:#1a1000; border:none; border-radius:var(--radius-sm); font-family:var(--ff); font-size:16px; font-weight:700; cursor:pointer; transition:background .2s,transform .1s; }
+.btn-primary:hover { background:var(--accent-dark); }
+.btn-primary:active { transform:scale(.98); }
+.btn-secondary { width:100%; padding:13px; background:transparent; color:var(--text2); border:1px solid var(--border2); border-radius:var(--radius-sm); font-family:var(--ff); font-size:15px; font-weight:500; cursor:pointer; transition:border-color .2s; }
+.btn-secondary:hover { border-color:var(--border2); color:var(--text); }
+.back-btn { align-self:flex-start; background:none; border:none; color:var(--text2); font-size:14px; font-family:var(--ff); cursor:pointer; margin-bottom:12px; padding:0; }
+.back-btn:hover { color:var(--text); }
+.divider { text-align:center; font-size:12px; color:var(--text3); margin:4px 0; }
+.error-msg { font-size:13px; color:var(--red); background:var(--red-bg); border:1px solid rgba(248,113,113,.2); border-radius:var(--radius-sm); padding:8px 12px; }
+
+/* ADMIN BADGE */
+.admin-badge { font-size:10px; font-weight:700; background:rgba(232,213,163,.15); color:var(--accent-dark); padding:2px 8px; border-radius:100px; vertical-align:middle; letter-spacing:.5px; text-transform:uppercase; margin-left:6px; }
+
+/* SECTION HINT */
+.section-hint { font-size:10px; font-weight:400; color:var(--text3); text-transform:none; letter-spacing:0; margin-left:6px; font-family:var(--ff2); }
+
+/* EDIT HINT */
+.edit-hint { font-size:10px; color:var(--text3); font-family:var(--ff2); flex-shrink:0; }
+
+/* TOGGLE BUTTON */
+.toggle-btn { font-size:11px; font-weight:700; padding:4px 10px; border-radius:100px; cursor:pointer; font-family:var(--ff); flex-shrink:0; transition:all .15s; }
+.toggle-btn.in { background:var(--green-bg); color:var(--green); border:1px solid rgba(74,222,128,.25); }
+.toggle-btn.out { background:var(--surface2); color:var(--text2); border:1px solid var(--border2); }
+
+/* REASSIGN MODAL */
+.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:20px; z-index:100; }
+.modal { background:var(--surface); border:1px solid var(--border2); border-radius:var(--radius); padding:24px 20px; max-width:340px; width:100%; display:flex; flex-direction:column; gap:10px; }
+.modal-title { font-size:17px; font-weight:700; color:var(--text); }
+.modal-sub { font-size:13px; color:var(--text2); font-family:var(--ff2); }
+.modal input { background:var(--surface2); border:1px solid var(--border2); border-radius:var(--radius-sm); padding:10px 12px; color:var(--text); font-family:var(--ff); font-size:15px; outline:none; width:100%; }
+.modal input:focus { border-color:var(--accent-dark); }
+.reassign-option { width:100%; padding:12px; background:var(--surface2); border:1px solid var(--border2); border-radius:var(--radius-sm); color:var(--text); font-family:var(--ff); font-size:15px; font-weight:500; cursor:pointer; text-align:left; transition:border-color .15s; }
+.reassign-option:hover { border-color:var(--accent-dark); color:var(--accent); }
+
+/* MEMBER STATS ROW */
+.member-stats { display:flex; align-items:center; gap:6px; }
+.unregistered { font-size:10px; color:var(--text3); font-style:italic; font-weight:400; }
