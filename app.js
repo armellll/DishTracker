@@ -45,7 +45,7 @@ function showMain() {
   document.getElementById('setup-screen').classList.remove('active');
   document.getElementById('main-screen').classList.add('active');
   document.getElementById('header-user').textContent = myName;
-  if (!db) initFirebase(); else render();
+  if (!db) initFirebase(); else { autoAddSelf(); render(); }
 }
 
 // ── FIREBASE ─────────────────────────────────────────────────────────────────
@@ -68,6 +68,7 @@ function initFirebase() {
         if (!state.completions) state.completions = {};
         if (!Array.isArray(state.queue)) state.queue = [];
       }
+      autoAddSelf();
       extendQueue();
       setSyncState('live', 'live');
       render();
@@ -91,6 +92,80 @@ function save(callback) {
     .catch(e => { console.error(e); setSyncState('err', 'error'); });
 }
 
+// ── AUTO-ADD SELF ─────────────────────────────────────────────────────────────
+// As soon as someone hits "Let's go", they're automatically added to the member list.
+// Their device ID is locked to their member record immediately.
+function autoAddSelf() {
+  if (!myName || !myDeviceId) return;
+
+  // Check if there's already a member with this device ID
+  const byDevice = state.members.find(m => m.deviceId === myDeviceId);
+  if (byDevice) {
+    // If name changed on device, sync it everywhere
+    if (byDevice.name !== myName) {
+      renameMember(byDevice.id, byDevice.name, myName);
+    }
+    return;
+  }
+
+  // Check if there's a member with matching name but no device yet (added manually)
+  const byName = state.members.find(m => m.name.toLowerCase() === myName.toLowerCase() && !m.deviceId);
+  if (byName) {
+    byName.deviceId = myDeviceId;
+    save();
+    return;
+  }
+
+  // Not in the list at all — add them
+  const id = 'mbr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  state.members.push({ id, name: myName, deviceId: myDeviceId, addedAt: Date.now() });
+  interleaveNewMember(id);
+  save();
+}
+
+// ── NAME CHANGE ───────────────────────────────────────────────────────────────
+function changeMyName() {
+  const newName = prompt('Change your name to:', myName);
+  if (!newName || !newName.trim()) return;
+  const trimmed = newName.trim();
+  if (trimmed.toLowerCase() === myName.toLowerCase()) return;
+
+  // Check no one else has that name
+  const conflict = state.members.find(m =>
+    m.name.toLowerCase() === trimmed.toLowerCase() && m.deviceId !== myDeviceId
+  );
+  if (conflict) { showToast('That name is already taken'); return; }
+
+  const oldName = myName;
+  myName = trimmed;
+  lockName(trimmed);
+  document.getElementById('header-user').textContent = myName;
+
+  // Find my member record and rename everywhere
+  const me = state.members.find(m => m.deviceId === myDeviceId);
+  if (me) renameMember(me.id, oldName, trimmed);
+  else save();
+
+  showToast('Name changed to ' + trimmed);
+}
+
+function renameMember(memberId, oldName, newName) {
+  // Update member record
+  const m = state.members.find(m => m.id === memberId);
+  if (m) m.name = newName;
+
+  // Update all completions that have this member's name
+  Object.keys(state.completions || {}).forEach(k => {
+    if (state.completions[k].memberId === memberId) {
+      state.completions[k].name = newName;
+    }
+  });
+
+  // Queue entries use memberId so they're fine — no changes needed there
+  save();
+  render();
+}
+
 // ── DATE HELPERS ──────────────────────────────────────────────────────────────
 function dateKey(d) { return d.toISOString().slice(0, 10); }
 function todayKey() { return dateKey(new Date()); }
@@ -108,15 +183,6 @@ function addDays(dateStr, n) {
 }
 
 // ── QUEUE SYSTEM ──────────────────────────────────────────────────────────────
-//
-// The queue is a simple ordered array of { date, memberId, isDebt }.
-// Rules:
-//   1. It is ALWAYS extended so it covers at least 30 days from today.
-//   2. The next person in the queue is always (lastPersonIndex + 1) % members.
-//   3. If a past day has no completion, that person owes a wash.
-//      Their owed turn is inserted RIGHT BEFORE whoever is next in the future queue.
-//   4. We NEVER recalculate old dates — only append to the future.
-
 function getNextMemberIndex(afterMemberId) {
   if (!state.members.length) return 0;
   const idx = state.members.findIndex(m => m.id === afterMemberId);
@@ -130,24 +196,18 @@ function extendQueue() {
   const tk = todayKey();
   const targetEnd = addDays(tk, 30);
 
-  // Step 1: figure out what the last date in the queue is
-  const sorted = [...(state.queue || [])].sort((a, b) => a.date.localeCompare(b.date));
-  let lastDate = sorted.length ? sorted[sorted.length - 1].date : addDays(tk, -1);
-  let lastMemberId = sorted.length ? sorted[sorted.length - 1].memberId : state.members[state.members.length - 1].id;
-
-  // Step 2: check for past missed turns and insert debts if not already there
   handleMissedTurns();
 
-  // Step 3: append future dates until we reach targetEnd
-  let fillFrom = addDays(lastDate, 1);
-  let nextIdx = getNextMemberIndex(lastMemberId);
+  const sorted = [...(state.queue || [])].sort((a, b) => a.date.localeCompare(b.date));
+  let fillFrom, nextIdx;
 
-  // Re-read sorted after handleMissedTurns may have changed the queue
-  const sorted2 = [...(state.queue || [])].sort((a, b) => a.date.localeCompare(b.date));
-  if (sorted2.length) {
-    const last = sorted2[sorted2.length - 1];
+  if (sorted.length) {
+    const last = sorted[sorted.length - 1];
     fillFrom = addDays(last.date, 1);
     nextIdx = getNextMemberIndex(last.memberId);
+  } else {
+    fillFrom = tk;
+    nextIdx = 0;
   }
 
   let changed = false;
@@ -165,39 +225,27 @@ function extendQueue() {
 
 function handleMissedTurns() {
   const tk = todayKey();
-
-  // Find past queue entries with no completion (genuinely missed, not already a debt)
   const missed = (state.queue || []).filter(e =>
-    e.date < tk &&
-    !e.isDebt &&
-    !(state.completions && state.completions[e.date])
+    e.date < tk && !e.isDebt && !(state.completions && state.completions[e.date])
   );
-
   if (missed.length === 0) return;
 
-  // Remove them from the queue (we'll re-insert as debts)
   state.queue = state.queue.filter(e =>
     !(e.date < tk && !e.isDebt && !(state.completions && state.completions[e.date]))
   );
 
-  // Get future entries sorted
   let future = state.queue.filter(e => e.date >= tk).sort((a, b) => a.date.localeCompare(b.date));
-
-  // Insert each missed person as a debt entry at the FRONT of future
-  // (so they wash first before the normal rotation continues)
   missed.reverse().forEach(m => {
     future.unshift({ date: '__reassign__', memberId: m.memberId, isDebt: true, originalDate: m.date });
   });
 
-  // Now reassign actual dates to every future entry in order
   let datePtr = tk;
-  const reassigned = [];
-  future.forEach(entry => {
-    reassigned.push({ ...entry, date: datePtr });
+  const reassigned = future.map(entry => {
+    const e = { ...entry, date: datePtr };
     datePtr = addDays(datePtr, 1);
+    return e;
   });
 
-  // Put it all back together
   const pastEntries = state.queue.filter(e => e.date < tk);
   state.queue = [...pastEntries, ...reassigned];
 }
@@ -222,46 +270,27 @@ function addMember() {
     showToast('Name already added'); return;
   }
   const id = 'mbr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  // No deviceId — they'll claim it when they open the app and set their name
   state.members.push({ id, name, deviceId: null, addedAt: Date.now() });
-  autoRegisterDevice();
-
-  // New member gets inserted into the future queue fairly:
-  // find their first appearance in the queue and interleave them
   interleaveNewMember(id);
-
   save();
   render();
   input.value = '';
-  showToast(name + ' added to the rotation');
+  showToast(name + ' added — they need to open the app and enter this name');
 }
 
 function interleaveNewMember(newId) {
-  // Clear future queue and rebuild it including the new member in round-robin
   const tk = todayKey();
   const future = state.queue.filter(e => e.date >= tk).sort((a, b) => a.date.localeCompare(b.date));
   const past = state.queue.filter(e => e.date < tk);
-
-  // Figure out who was going next before new member was added (without new member)
-  // Just rebuild the full future rotation from today with all members including new one
   if (future.length === 0) { extendQueue(); return; }
 
-  // Find who goes first today (keep their slot), then rotate through all members including new
-  const firstEntry = future[0];
-  const firstIdx = state.members.findIndex(m => m.id === firstEntry.memberId);
-
-  const rebuilt = [];
-  for (let i = 0; i < future.length; i++) {
+  const firstIdx = state.members.findIndex(m => m.id === future[0].memberId);
+  const rebuilt = future.map((entry, i) => {
     const idx = ((firstIdx + i) % state.members.length + state.members.length) % state.members.length;
-    rebuilt.push({ ...future[i], memberId: state.members[idx].id });
-  }
-
+    return { ...entry, memberId: state.members[idx].id };
+  });
   state.queue = [...past, ...rebuilt];
-}
-
-function autoRegisterDevice() {
-  if (!myName || !myDeviceId) return;
-  const me = state.members.find(m => m.name.toLowerCase() === myName.toLowerCase());
-  if (me && !me.deviceId) me.deviceId = myDeviceId;
 }
 
 function removeMember(id) {
@@ -269,17 +298,13 @@ function removeMember(id) {
   if (!m) return;
   if (!confirm('Remove ' + m.name + ' from the rotation?')) return;
   state.members = state.members.filter(m => m.id !== id);
-
-  // Remove their entries from queue and close the date gaps
   const tk = todayKey();
   const past = state.queue.filter(e => e.date < tk);
-  let future = state.queue.filter(e => e.date >= tk && e.memberId !== id)
+  let future = state.queue
+    .filter(e => e.date >= tk && e.memberId !== id)
     .sort((a, b) => a.date.localeCompare(b.date));
-
-  // Reassign dates so there are no gaps
   let datePtr = tk;
-  future = future.map(e => { const entry = { ...e, date: datePtr }; datePtr = addDays(datePtr, 1); return entry; });
-
+  future = future.map(e => { const r = { ...e, date: datePtr }; datePtr = addDays(datePtr, 1); return r; });
   state.queue = [...past, ...future];
   extendQueue();
   save();
@@ -292,16 +317,8 @@ function markDone() {
   const assignee = getAssigneeForDate(k);
   if (!assignee) return;
 
-  const me = state.members.find(m => m.name.toLowerCase() === myName.toLowerCase());
-  if (!me) { showToast('Add yourself to the member list first'); return; }
-
-  // Lock device to this member on first mark
-  if (!me.deviceId) {
-    me.deviceId = myDeviceId;
-  } else if (me.deviceId !== myDeviceId) {
-    showToast('This name is registered on another device! 🚫');
-    return;
-  }
+  const me = state.members.find(m => m.deviceId === myDeviceId);
+  if (!me) { showToast('Your device is not registered yet'); return; }
 
   if (assignee.id !== me.id) {
     showToast("It's " + assignee.name + "'s turn today! 👀");
@@ -310,11 +327,31 @@ function markDone() {
 
   if (!state.completions) state.completions = {};
   state.completions[k] = { memberId: me.id, name: me.name, timestamp: Date.now() };
-
-  // The queue already has tomorrow assigned correctly — just save and re-render
   save();
   render();
   showToast('Dishes marked done! ✓');
+}
+
+// ── EDIT COMPLETION ───────────────────────────────────────────────────────────
+function undoCompletion(dateStr) {
+  if (!state.completions || !state.completions[dateStr]) return;
+  const comp = state.completions[dateStr];
+
+  // Only the person who marked it, or if it was marked on this device, can undo
+  const me = state.members.find(m => m.deviceId === myDeviceId);
+  if (!me) { showToast('You are not registered on this device'); return; }
+
+  const isOwner = comp.memberId === me.id;
+  if (!isOwner) {
+    showToast("You can only undo your own completions");
+    return;
+  }
+
+  if (!confirm('Undo this completion for ' + fmtDate(dateStr) + '?')) return;
+  delete state.completions[dateStr];
+  save();
+  render();
+  showToast('Completion removed');
 }
 
 // ── RENDER ───────────────────────────────────────────────────────────────────
@@ -335,22 +372,25 @@ function renderHero() {
   document.getElementById('hero-date').textContent =
     new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
   document.getElementById('hero-name').textContent =
-    assignee ? assignee.name : (state.members && state.members.length ? '—' : 'Add members below');
+    assignee ? assignee.name : (state.members && state.members.length ? '—' : 'Opening app adds you automatically');
 
   const debtBadge = (entry && entry.isDebt)
     ? `<div class="debt-badge">⚠ Makeup wash — skipped on ${fmtDate(entry.originalDate)}</div>` : '';
 
   if (comp) {
+    const me = state.members.find(m => m.deviceId === myDeviceId);
+    const canUndo = me && comp.memberId === me.id;
     action.innerHTML = `${debtBadge}
       <div class="done-status">
         <span class="done-check">✓</span>
-        <div>
+        <div style="flex:1">
           <div class="done-text">Done by ${comp.name}</div>
           <div class="done-time">${fmtTime(comp.timestamp)}</div>
         </div>
+        ${canUndo ? `<button class="undo-btn" onclick="undoCompletion('${k}')">Undo</button>` : ''}
       </div>`;
   } else if (assignee) {
-    const me = state.members.find(m => m.name.toLowerCase() === myName.toLowerCase());
+    const me = state.members.find(m => m.deviceId === myDeviceId);
     const isMyTurn = me && assignee.id === me.id;
     if (isMyTurn) {
       action.innerHTML = `${debtBadge}<button class="btn-done" onclick="markDone()">✓ I washed the dishes</button>`;
@@ -365,7 +405,7 @@ function renderHero() {
 function renderWeek() {
   const el = document.getElementById('week-list');
   if (!state.members || !state.members.length) {
-    el.innerHTML = '<div class="empty-msg">Add members to see the schedule</div>';
+    el.innerHTML = '<div class="empty-msg">Open the app on each device to join the rotation</div>';
     return;
   }
   const base = new Date();
@@ -399,7 +439,7 @@ function renderWeek() {
 function renderMembers() {
   const el = document.getElementById('member-list');
   if (!state.members || !state.members.length) {
-    el.innerHTML = '<div class="empty-msg">No members yet — add people below</div>';
+    el.innerHTML = '<div class="empty-msg">No members yet — open the app to join</div>';
     return;
   }
   const counts = {};
@@ -408,11 +448,12 @@ function renderMembers() {
   (state.queue || []).filter(e => e.isDebt).forEach(e => { debts[e.memberId] = (debts[e.memberId] || 0) + 1; });
 
   el.innerHTML = state.members.map((m, i) => {
-    const isYou = m.name.toLowerCase() === myName.toLowerCase();
+    const isYou = m.deviceId === myDeviceId;
     const debt = debts[m.id] || 0;
+    const registered = !!m.deviceId;
     return `<div class="member-row">
       <div class="member-avatar av-${i % 6}">${m.name[0].toUpperCase()}</div>
-      <div class="member-name">${m.name}</div>
+      <div class="member-name">${m.name}${!registered ? ' <span class="unregistered">not joined yet</span>' : ''}</div>
       <div class="member-stats">
         <span class="member-count">${counts[m.id] || 0} done</span>
         ${debt > 0 ? `<span class="member-debt">${debt} owed</span>` : ''}
@@ -429,14 +470,20 @@ function renderHistory() {
     el.innerHTML = '<div class="empty-msg">No completed tasks yet</div>';
     return;
   }
+  const me = state.members.find(m => m.deviceId === myDeviceId);
   const sorted = Object.entries(state.completions).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 20);
-  el.innerHTML = sorted.map(([k, c]) => `
-    <div class="history-row">
+  el.innerHTML = sorted.map(([k, c]) => {
+    const canUndo = me && c.memberId === me.id;
+    return `<div class="history-row">
       <div class="history-date">${fmtDate(k)}</div>
       <div class="history-who">${c.name}</div>
       <div class="history-time">${fmtTime(c.timestamp)}</div>
-      <div class="history-tick">✓</div>
-    </div>`).join('');
+      ${canUndo
+        ? `<button class="undo-btn-sm" onclick="undoCompletion('${k}')">Undo</button>`
+        : '<div class="history-tick">✓</div>'
+      }
+    </div>`;
+  }).join('');
 }
 
 // ── UI HELPERS ────────────────────────────────────────────────────────────────
