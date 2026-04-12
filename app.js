@@ -43,6 +43,8 @@ window.addEventListener('DOMContentLoaded', () => {
     initFirebase('member');
   } else {
     showScreen('landing-screen');
+    // Check if admin already exists — if so hide the "Set up admin" button
+    checkAdminExists();
   }
 
   // Enter key support
@@ -51,6 +53,19 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('admin-new-password').addEventListener('keydown', e => { if (e.key === 'Enter') createAdmin(); });
   document.getElementById('admin-add-name').addEventListener('keydown', e => { if (e.key === 'Enter') adminAddMember(); });
 });
+
+// ── CHECK ADMIN EXISTS ───────────────────────────────────────────────────────
+function checkAdminExists() {
+  try {
+    if (firebaseConfig.apiKey === 'PASTE_YOUR_API_KEY_HERE') return;
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    const tempDb = firebase.database();
+    tempDb.ref('dishduty/adminHash').once('value').then(snap => {
+      const setupBtn = document.getElementById('admin-setup-btn');
+      if (setupBtn) setupBtn.style.display = snap.val() ? 'none' : 'block';
+    });
+  } catch(e) {}
+}
 
 // ── SCREEN NAVIGATION ─────────────────────────────────────────────────────────
 function showScreen(id) {
@@ -88,7 +103,9 @@ function adminLogin() {
   appRef.once('value').then(snap => {
     const data = snap.val();
     const adminHash = data && data.adminHash;
+
     if (!adminHash) {
+      // No admin yet — allow first-time setup
       showScreen('admin-setup-screen');
       return;
     }
@@ -110,6 +127,24 @@ function createAdmin() {
   const pw1 = document.getElementById('admin-new-password').value;
   const pw2 = document.getElementById('admin-confirm-password').value;
   const errEl = document.getElementById('admin-setup-error');
+
+  // Check Firebase first — block if admin already exists
+  if (appRef) {
+    appRef.once('value').then(snap => {
+      const data = snap.val();
+      if (data && data.adminHash) {
+        errEl.textContent = 'An admin account already exists. Contact the admin.';
+        errEl.style.display = 'block';
+        return;
+      }
+      _doCreateAdmin(name, pw1, pw2, errEl);
+    });
+    return;
+  }
+  _doCreateAdmin(name, pw1, pw2, errEl);
+}
+
+function _doCreateAdmin(name, pw1, pw2, errEl) {
 
   if (!name) { errEl.textContent = 'Enter your name'; errEl.style.display = 'block'; return; }
   if (!pw1) { errEl.textContent = 'Enter a password'; errEl.style.display = 'block'; return; }
@@ -423,10 +458,45 @@ function doReassign(memberId) {
   } else {
     state.queue.push({ date: reassignDateTarget, memberId, isDebt: false });
   }
+
+  // Rebalance the queue from this date forward so it stays alternating.
+  // Rule: after the reassigned date, the next person must be different from
+  // the reassigned person, continuing the round-robin from there.
+  rebalanceQueueFrom(reassignDateTarget);
+
   save();
   closeModal();
   renderAdmin();
   showToast('Turn reassigned');
+}
+
+// Rebalance all future queue entries starting the day AFTER dateStr
+// so no one appears twice in a row and rotation stays fair.
+function rebalanceQueueFrom(fromDate) {
+  const rotation = getRotationMembers();
+  if (rotation.length < 2) return;
+
+  const tk = todayKey();
+  // Sort all future undone entries after fromDate
+  const pivot = getQueueEntry(fromDate);
+  if (!pivot) return;
+
+  const afterPivot = state.queue
+    .filter(e => e.date > fromDate && !(state.completions && state.completions[e.date]))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (afterPivot.length === 0) return;
+
+  // Find where the reassigned member sits in rotation
+  let lastMemberId = pivot.memberId;
+  let nextIdx = rotation.findIndex(m => m.id === lastMemberId);
+  if (nextIdx === -1) nextIdx = 0;
+
+  afterPivot.forEach(entry => {
+    nextIdx = (nextIdx + 1) % rotation.length;
+    entry.memberId = rotation[nextIdx].id;
+    lastMemberId = entry.memberId;
+  });
 }
 
 // ── ADMIN: UNDO COMPLETION ────────────────────────────────────────────────────
