@@ -9,77 +9,187 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-
 <div id="app">
 
-  <!-- SETUP SCREEN -->
-  <div id="setup-screen" class="screen active">
-    <div class="setup-inner">
-      <div class="setup-icon">🍽</div>
+  <!-- ── LANDING SCREEN (first visit) ── -->
+  <div id="landing-screen" class="screen active">
+    <div class="center-wrap">
+      <div class="big-icon">🍽</div>
       <h1>Dish Duty</h1>
-      <p class="setup-sub">No more arguments about whose turn it is.</p>
-      <div class="setup-card">
-        <label class="field-label">Your name</label>
-        <input id="setup-name" type="text" placeholder="e.g. Maria" maxlength="25" autocomplete="off" />
-        <button id="setup-btn" onclick="setupDone()">Let's go</button>
+      <p class="tagline">No more arguments about whose turn it is.</p>
+      <div class="landing-card">
+        <button class="btn-primary" onclick="showScreen('join-screen')">Join as member</button>
+        <button class="btn-secondary" onclick="showScreen('admin-login-screen')">Admin login</button>
       </div>
     </div>
   </div>
 
-  <!-- MAIN SCREEN -->
-  <div id="main-screen" class="screen">
+  <!-- ── JOIN SCREEN ── -->
+  <div id="join-screen" class="screen">
+    <div class="center-wrap">
+      <button class="back-btn" onclick="showScreen('landing-screen')">← Back</button>
+      <div class="big-icon">👋</div>
+      <h1>Join the rotation</h1>
+      <p class="tagline">Enter your name to join. The admin will assign your turns.</p>
+      <div class="landing-card">
+        <label class="field-label">Your name</label>
+        <input id="join-name" type="text" placeholder="e.g. Maria" maxlength="25" autocomplete="off" />
+        <button class="btn-primary" onclick="joinAsMember()">Join</button>
+      </div>
+    </div>
+  </div>
 
+  <!-- ── ADMIN LOGIN SCREEN ── -->
+  <div id="admin-login-screen" class="screen">
+    <div class="center-wrap">
+      <button class="back-btn" onclick="showScreen('landing-screen')">← Back</button>
+      <div class="big-icon">🔐</div>
+      <h1>Admin login</h1>
+      <p class="tagline">Enter the admin password to manage the rotation.</p>
+      <div class="landing-card">
+        <label class="field-label">Password</label>
+        <input id="admin-password-input" type="password" placeholder="Admin password" autocomplete="off" />
+        <button class="btn-primary" onclick="adminLogin()">Login</button>
+        <div id="admin-login-error" class="error-msg" style="display:none">Wrong password</div>
+        <div class="divider">First time?</div>
+        <button class="btn-secondary" onclick="showScreen('admin-setup-screen')">Set up admin account</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ADMIN SETUP SCREEN (first time only) ── -->
+  <div id="admin-setup-screen" class="screen">
+    <div class="center-wrap">
+      <button class="back-btn" onclick="showScreen('admin-login-screen')">← Back</button>
+      <div class="big-icon">⚙️</div>
+      <h1>Create admin</h1>
+      <p class="tagline">Set your name and a password. Keep it safe!</p>
+      <div class="landing-card">
+        <label class="field-label">Your name</label>
+        <input id="admin-name-input" type="text" placeholder="e.g. Armel" maxlength="25" autocomplete="off" />
+        <label class="field-label" style="margin-top:12px">Password</label>
+        <input id="admin-new-password" type="password" placeholder="Choose a password" autocomplete="off" />
+        <label class="field-label" style="margin-top:12px">Confirm password</label>
+        <input id="admin-confirm-password" type="password" placeholder="Confirm password" autocomplete="off" />
+        <button class="btn-primary" style="margin-top:16px" onclick="createAdmin()">Create admin account</button>
+        <div id="admin-setup-error" class="error-msg" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MEMBER MAIN SCREEN ── -->
+  <div id="member-screen" class="screen">
     <header>
       <div class="header-left">
         <span class="header-icon">🍽</span>
         <span class="header-title">Dish Duty</span>
       </div>
       <div class="header-right">
-        <div class="sync-badge" id="sync-badge">
+        <div class="sync-badge">
           <span class="sync-dot" id="sync-dot"></span>
           <span id="sync-text">connecting</span>
         </div>
-        <button class="header-user" id="header-user" onclick="changeMyName()"></button>
+        <button class="header-user" id="member-header-user"></button>
       </div>
     </header>
-
     <main>
-
-      <!-- TODAY HERO -->
-      <section class="hero-section" id="hero-section">
-        <div class="hero-date" id="hero-date"></div>
+      <section class="hero-section">
+        <div class="hero-date" id="member-hero-date"></div>
         <div class="hero-label">On duty today</div>
-        <div class="hero-name" id="hero-name">—</div>
-        <div id="hero-action"></div>
+        <div class="hero-name" id="member-hero-name">—</div>
+        <div id="member-hero-action"></div>
       </section>
-
-      <!-- WEEK VIEW -->
       <section class="card-section">
-        <div class="section-title">This week</div>
-        <div id="week-list"></div>
+        <div class="section-title">Upcoming schedule</div>
+        <div id="member-week-list"></div>
       </section>
-
-      <!-- MEMBERS -->
       <section class="card-section">
-        <div class="section-title">Household</div>
-        <div id="member-list"></div>
-
+        <div class="section-title">Members</div>
+        <div id="member-member-list"></div>
       </section>
-
-      <!-- HISTORY -->
       <section class="card-section">
-        <div class="section-title">Recent history</div>
-        <div id="history-list"></div>
+        <div class="section-title">History</div>
+        <div id="member-history-list"></div>
       </section>
-
     </main>
+  </div>
+
+  <!-- ── ADMIN MAIN SCREEN ── -->
+  <div id="admin-screen" class="screen">
+    <header>
+      <div class="header-left">
+        <span class="header-icon">🍽</span>
+        <span class="header-title">Dish Duty <span class="admin-badge">Admin</span></span>
+      </div>
+      <div class="header-right">
+        <div class="sync-badge">
+          <span class="sync-dot" id="admin-sync-dot"></span>
+          <span id="admin-sync-text">connecting</span>
+        </div>
+        <button class="header-user" onclick="adminLogout()">Logout</button>
+      </div>
+    </header>
+    <main>
+      <!-- Today -->
+      <section class="hero-section">
+        <div class="hero-date" id="admin-hero-date"></div>
+        <div class="hero-label">On duty today</div>
+        <div class="hero-name" id="admin-hero-name">—</div>
+        <div id="admin-hero-action"></div>
+      </section>
+
+      <!-- Schedule manager -->
+      <section class="card-section">
+        <div class="section-title">Schedule <span class="section-hint">tap a day to reassign</span></div>
+        <div id="admin-week-list"></div>
+      </section>
+
+      <!-- Members manager -->
+      <section class="card-section">
+        <div class="section-title">Members <span class="section-hint">joined users</span></div>
+        <div id="admin-member-list"></div>
+        <div class="add-row">
+          <input id="admin-add-name" type="text" placeholder="Add name manually…" maxlength="25" autocomplete="off" />
+          <button class="add-btn" onclick="adminAddMember()">Add</button>
+        </div>
+      </section>
+
+      <!-- History with undo -->
+      <section class="card-section">
+        <div class="section-title">History <span class="section-hint">admin can undo any</span></div>
+        <div id="admin-history-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ── REASSIGN MODAL ── -->
+  <div id="reassign-modal" class="modal-overlay" style="display:none">
+    <div class="modal">
+      <div class="modal-title">Reassign turn</div>
+      <div class="modal-sub" id="reassign-date-label"></div>
+      <div id="reassign-options"></div>
+      <button class="btn-secondary" style="width:100%;margin-top:12px" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ── CHANGE PASSWORD MODAL ── -->
+  <div id="change-pw-modal" class="modal-overlay" style="display:none">
+    <div class="modal">
+      <div class="modal-title">Change admin password</div>
+      <input id="new-pw-1" type="password" placeholder="New password" style="margin-bottom:8px" />
+      <input id="new-pw-2" type="password" placeholder="Confirm new password" />
+      <div id="pw-change-error" class="error-msg" style="display:none"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn-primary" style="flex:1" onclick="saveNewPassword()">Save</button>
+        <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      </div>
+    </div>
   </div>
 
 </div>
 
 <div class="toast" id="toast"></div>
 
-<!-- Firebase v9 compat -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="firebase-config.js"></script>
