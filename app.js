@@ -508,6 +508,29 @@ function undoCompletion(dateStr) {
   showToast('Completion removed');
 }
 
+// ── ADMIN: MARK PAST DAY AS DONE ─────────────────────────────────────────────
+function adminMarkDone(dateStr, memberId, event) {
+  if (event) event.stopPropagation();
+  const member = state.members.find(m => m.id === memberId);
+  if (!member) return;
+  if (!confirm('Mark ' + fmtDate(dateStr) + ' as done by ' + member.name + '?')) return;
+
+  if (!state.completions) state.completions = {};
+  state.completions[dateStr] = {
+    memberId: member.id,
+    name: member.name,
+    timestamp: new Date(dateStr + 'T12:00:00').getTime(), // Use noon of that day
+    markedByAdmin: true
+  };
+
+  // Remove this day from debt queue if it was flagged as missed
+  state.queue = state.queue.filter(e => !(e.isDebt && e.originalDate === dateStr));
+
+  save();
+  renderAdmin();
+  showToast(fmtDate(dateStr) + ' marked as done ✓');
+}
+
 // ── MEMBER: MARK DONE ─────────────────────────────────────────────────────────
 function markDone() {
   const k = todayKey();
@@ -646,7 +669,9 @@ function buildWeekHTML(isAdmin) {
   const base = new Date();
   const tk = todayKey();
   let html = '';
-  for (let i = -2; i <= 9; i++) {
+  // Show 7 past days for admin (so they can mark missed ones), 2 for members
+  const pastDays = isAdmin ? -7 : -2;
+  for (let i = pastDays; i <= 9; i++) {
     const d = new Date(base);
     d.setDate(base.getDate() + i);
     const k = dateKey(d);
@@ -655,19 +680,30 @@ function buildWeekHTML(isAdmin) {
     const done = !!(state.completions && state.completions[k]);
     const isToday = k === tk;
     const isPast = k < tk;
+    const isMissed = isPast && !done;
 
     let badge = '';
     if (done) badge = '<span class="week-badge badge-done">Done ✓</span>';
     else if (isToday) badge = '<span class="week-badge badge-today">Today</span>';
-    else if (isPast) badge = '<span class="week-badge badge-miss">Missed</span>';
+    else if (isMissed) badge = '<span class="week-badge badge-miss">Missed</span>';
     else if (entry && entry.isDebt) badge = '<span class="week-badge badge-debt">Makeup</span>';
 
-    const clickable = isAdmin && !done ? `onclick="openReassign('${k}')" style="cursor:pointer"` : '';
-    html += `<div class="week-row${isToday ? ' is-today' : ''}" ${clickable}>
-      <div class="week-day${isToday ? ' today' : ''}">${isToday ? 'TODAY' : DAYS[d.getDay()].toUpperCase()}</div>
+    // Admin actions: missed days get a "Mark done" button, future/today gets reassign
+    let actions = '';
+    if (isAdmin) {
+      if (isMissed && assignee) {
+        // Mark done for a specific person on that missed day
+        actions = `<button class="mark-done-sm" onclick="adminMarkDone('${k}','${assignee.id}',event)">Mark done</button>`;
+      } else if (!done) {
+        actions = `<button class="edit-hint-btn" onclick="openReassign('${k}')">edit</button>`;
+      }
+    }
+
+    html += `<div class="week-row${isToday ? ' is-today' : ''}${isMissed && isAdmin ? ' missed-row' : ''}">
+      <div class="week-day${isToday ? ' today' : ''}${isMissed ? ' missed' : ''}">${isToday ? 'TODAY' : DAYS[d.getDay()].toUpperCase()}</div>
       <div class="week-person">${assignee ? assignee.name : '—'}</div>
       ${badge}
-      ${isAdmin && !done ? '<span class="edit-hint">edit</span>' : ''}
+      ${actions}
     </div>`;
   }
   return html;
