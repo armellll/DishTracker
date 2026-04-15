@@ -532,3 +532,32 @@ main {
 /* MEMBER STATS ROW */
 .member-stats { display:flex; align-items:center; gap:6px; }
 .unregistered { font-size:10px; color:var(--text3); font-style:italic; font-weight:400; }
+
+/* MARK DONE (admin past days) */
+.mark-done-sm {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 100px;
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid rgba(74,222,128,.25);
+  cursor: pointer;
+  font-family: var(--ff);
+  flex-shrink: 0;
+  transition: background .15s;
+}
+.mark-done-sm:hover { background: rgba(74,222,128,.2); }
+.edit-hint-btn {
+  font-size: 11px;
+  color: var(--text3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--ff2);
+  flex-shrink: 0;
+  padding: 2px 4px;
+}
+.edit-hint-btn:hover { color: var(--text2); }
+.missed-row { background: rgba(248,113,113,.03); }
+.week-day.missed { color: var(--red); }
