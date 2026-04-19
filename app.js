@@ -508,6 +508,24 @@ function undoCompletion(dateStr) {
   showToast('Completion removed');
 }
 
+// ── ADMIN: MARK TODAY AS DONE ON BEHALF ──────────────────────────────────────
+function adminMarkTodayDone(memberId) {
+  const member = state.members.find(m => m.id === memberId);
+  if (!member) return;
+  if (!confirm('Mark today as done on behalf of ' + member.name + '?')) return;
+  const k = todayKey();
+  if (!state.completions) state.completions = {};
+  state.completions[k] = {
+    memberId: member.id,
+    name: member.name,
+    timestamp: Date.now(),
+    markedByAdmin: true
+  };
+  save();
+  renderAdmin();
+  showToast('Marked as done on behalf of ' + member.name + ' ✓');
+}
+
 // ── ADMIN: MARK PAST DAY AS DONE ─────────────────────────────────────────────
 function adminMarkDone(dateStr, memberId, event) {
   if (event) event.stopPropagation();
@@ -627,7 +645,13 @@ function renderAdmin() {
         <button class="undo-btn" onclick="undoCompletion('${k}')">Undo</button>
       </div>`;
   } else if (assignee) {
-    heroAction.innerHTML = `${debtBadge}<div class="btn-not-yours">Waiting for ${assignee.name}…</div>`;
+    heroAction.innerHTML = `${debtBadge}
+      <div class="behalf-wrap">
+        <div class="btn-not-yours">Waiting for ${assignee.name}…</div>
+        <button class="btn-behalf" onclick="adminMarkTodayDone('${assignee.id}')">
+          ✓ Mark done on behalf of ${assignee.name}
+        </button>
+      </div>`;
   } else {
     heroAction.innerHTML = '<div class="empty-msg">Add members to rotation below</div>';
   }
