@@ -4,18 +4,18 @@ let appRef = null;
 let myDeviceId = null;
 let myRole = null; // 'admin' | 'member' | null
 let myName = null;
-let state = { members: [], completions: {}, queue: [], adminHash: null };
+let state = { members: [], completions: {}, schedule: {}, adminHash: null, adminName: null };
 
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-// ── SIMPLE HASH (not cryptographic, just obfuscation for casual use) ──────────
+// ── HASH ──────────────────────────────────────────────────────────────────────
 function hashPassword(pw) {
   let h = 0;
   for (let i = 0; i < pw.length; i++) h = (Math.imul(31, h) + pw.charCodeAt(i)) | 0;
   return 'dh_' + Math.abs(h).toString(36) + '_' + pw.length;
 }
 
-// ── DEVICE IDENTITY ───────────────────────────────────────────────────────────
+// ── DEVICE ID ─────────────────────────────────────────────────────────────────
 function getOrCreateDeviceId() {
   let id = localStorage.getItem('dishduty_device_id');
   if (!id) {
@@ -28,94 +28,69 @@ function getOrCreateDeviceId() {
 // ── INIT ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   myDeviceId = getOrCreateDeviceId();
-
-  // Check saved session
   const savedRole = localStorage.getItem('dishduty_role');
   const savedName = localStorage.getItem('dishduty_name');
 
   if (savedRole === 'admin') {
-    myRole = 'admin';
-    myName = savedName;
+    myRole = 'admin'; myName = savedName;
     initFirebase('admin');
   } else if (savedRole === 'member' && savedName) {
-    myRole = 'member';
-    myName = savedName;
+    myRole = 'member'; myName = savedName;
     initFirebase('member');
   } else {
     showScreen('landing-screen');
-    // Check if admin already exists — if so hide the "Set up admin" button
     checkAdminExists();
   }
 
-  // Enter key support
   document.getElementById('join-name').addEventListener('keydown', e => { if (e.key === 'Enter') joinAsMember(); });
   document.getElementById('admin-password-input').addEventListener('keydown', e => { if (e.key === 'Enter') adminLogin(); });
   document.getElementById('admin-new-password').addEventListener('keydown', e => { if (e.key === 'Enter') createAdmin(); });
   document.getElementById('admin-add-name').addEventListener('keydown', e => { if (e.key === 'Enter') adminAddMember(); });
 });
 
-// ── CHECK ADMIN EXISTS ───────────────────────────────────────────────────────
 function checkAdminExists() {
   try {
     if (firebaseConfig.apiKey === 'PASTE_YOUR_API_KEY_HERE') return;
     if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-    const tempDb = firebase.database();
-    tempDb.ref('dishduty/adminHash').once('value').then(snap => {
-      const setupBtn = document.getElementById('admin-setup-btn');
-      if (setupBtn) setupBtn.style.display = snap.val() ? 'none' : 'block';
+    firebase.database().ref('dishduty/adminHash').once('value').then(snap => {
+      const btn = document.getElementById('admin-setup-btn');
+      if (btn) btn.style.display = snap.val() ? 'none' : 'block';
     });
   } catch(e) {}
 }
 
-// ── SCREEN NAVIGATION ─────────────────────────────────────────────────────────
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
 }
 
-// ── JOIN AS MEMBER ────────────────────────────────────────────────────────────
+// ── AUTH ──────────────────────────────────────────────────────────────────────
 function joinAsMember() {
   const name = document.getElementById('join-name').value.trim();
   if (!name) { showToast('Enter your name first'); return; }
-
-  myName = name;
-  myRole = 'member';
+  myName = name; myRole = 'member';
   localStorage.setItem('dishduty_role', 'member');
   localStorage.setItem('dishduty_name', name);
   initFirebase('member');
 }
 
-// ── ADMIN AUTH ────────────────────────────────────────────────────────────────
 function adminLogin() {
   const pw = document.getElementById('admin-password-input').value;
   if (!pw) return;
-
-  // Need to load state first to check hash
-  if (!db) {
-    // Init firebase just to read, then verify
-    try {
-      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-      db = firebase.database();
-      appRef = db.ref('dishduty');
-    } catch(e) { showToast('Firebase error'); return; }
-  }
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    if (!db) { db = firebase.database(); appRef = db.ref('dishduty'); }
+  } catch(e) { showToast('Firebase error'); return; }
 
   appRef.once('value').then(snap => {
     const data = snap.val();
     const adminHash = data && data.adminHash;
-
-    if (!adminHash) {
-      // No admin yet — allow first-time setup
-      showScreen('admin-setup-screen');
-      return;
-    }
+    if (!adminHash) { showScreen('admin-setup-screen'); return; }
     if (hashPassword(pw) !== adminHash) {
-      document.getElementById('admin-login-error').style.display = 'block';
-      return;
+      document.getElementById('admin-login-error').style.display = 'block'; return;
     }
     document.getElementById('admin-login-error').style.display = 'none';
-    myRole = 'admin';
-    myName = data.adminName || 'Admin';
+    myRole = 'admin'; myName = data.adminName || 'Admin';
     localStorage.setItem('dishduty_role', 'admin');
     localStorage.setItem('dishduty_name', myName);
     startListening('admin');
@@ -127,60 +102,38 @@ function createAdmin() {
   const pw1 = document.getElementById('admin-new-password').value;
   const pw2 = document.getElementById('admin-confirm-password').value;
   const errEl = document.getElementById('admin-setup-error');
-
-  // Check Firebase first — block if admin already exists
-  if (appRef) {
-    appRef.once('value').then(snap => {
-      const data = snap.val();
-      if (data && data.adminHash) {
-        errEl.textContent = 'An admin account already exists. Contact the admin.';
-        errEl.style.display = 'block';
-        return;
-      }
-      _doCreateAdmin(name, pw1, pw2, errEl);
-    });
-    return;
-  }
-  _doCreateAdmin(name, pw1, pw2, errEl);
-}
-
-function _doCreateAdmin(name, pw1, pw2, errEl) {
-
   if (!name) { errEl.textContent = 'Enter your name'; errEl.style.display = 'block'; return; }
-  if (!pw1) { errEl.textContent = 'Enter a password'; errEl.style.display = 'block'; return; }
+  if (!pw1)  { errEl.textContent = 'Enter a password'; errEl.style.display = 'block'; return; }
   if (pw1 !== pw2) { errEl.textContent = 'Passwords do not match'; errEl.style.display = 'block'; return; }
   if (pw1.length < 4) { errEl.textContent = 'Password must be at least 4 characters'; errEl.style.display = 'block'; return; }
-
   errEl.style.display = 'none';
 
-  if (!db) {
-    try {
-      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-      db = firebase.database();
-      appRef = db.ref('dishduty');
-    } catch(e) { showToast('Firebase error'); return; }
-  }
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    if (!db) { db = firebase.database(); appRef = db.ref('dishduty'); }
+  } catch(e) { showToast('Firebase error'); return; }
 
-  myRole = 'admin';
-  myName = name;
-  localStorage.setItem('dishduty_role', 'admin');
-  localStorage.setItem('dishduty_name', name);
-
-  // Save admin credentials to Firebase
-  appRef.update({ adminHash: hashPassword(pw1), adminName: name }).then(() => {
-    startListening('admin');
+  appRef.once('value').then(snap => {
+    const data = snap.val();
+    if (data && data.adminHash) {
+      errEl.textContent = 'An admin account already exists.';
+      errEl.style.display = 'block'; return;
+    }
+    myRole = 'admin'; myName = name;
+    localStorage.setItem('dishduty_role', 'admin');
+    localStorage.setItem('dishduty_name', name);
+    appRef.update({ adminHash: hashPassword(pw1), adminName: name }).then(() => startListening('admin'));
   });
 }
 
 function adminLogout() {
   localStorage.removeItem('dishduty_role');
   localStorage.removeItem('dishduty_name');
-  myRole = null;
-  myName = null;
+  myRole = null; myName = null;
   if (appRef) appRef.off();
-  db = null;
-  appRef = null;
+  db = null; appRef = null;
   showScreen('landing-screen');
+  checkAdminExists();
 }
 
 function saveNewPassword() {
@@ -190,32 +143,22 @@ function saveNewPassword() {
   if (!pw1) { errEl.textContent = 'Enter a new password'; errEl.style.display = 'block'; return; }
   if (pw1 !== pw2) { errEl.textContent = 'Passwords do not match'; errEl.style.display = 'block'; return; }
   errEl.style.display = 'none';
-  appRef.update({ adminHash: hashPassword(pw1) }).then(() => {
-    closeModal();
-    showToast('Password changed!');
-  });
+  appRef.update({ adminHash: hashPassword(pw1) }).then(() => { closeModal(); showToast('Password changed!'); });
 }
 
 // ── FIREBASE ──────────────────────────────────────────────────────────────────
 function initFirebase(role) {
   try {
     if (firebaseConfig.apiKey === 'PASTE_YOUR_API_KEY_HERE') {
-      showToast('Add your Firebase config first');
-      showScreen('landing-screen');
-      return;
+      showToast('Add your Firebase config first'); showScreen('landing-screen'); return;
     }
     if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
     db = firebase.database();
     appRef = db.ref('dishduty');
-
     if (role === 'admin') {
-      // For returning admin, verify password hash still exists
       appRef.once('value').then(snap => {
         const data = snap.val();
-        if (!data || !data.adminHash) {
-          showScreen('admin-setup-screen');
-          return;
-        }
+        if (!data || !data.adminHash) { showScreen('admin-setup-screen'); return; }
         startListening('admin');
       });
     } else {
@@ -235,18 +178,10 @@ function startListening(role) {
       state = data;
       if (!Array.isArray(state.members)) state.members = [];
       if (!state.completions) state.completions = {};
-      if (!Array.isArray(state.queue)) state.queue = [];
+      if (!state.schedule) state.schedule = {};
     }
-
-    if (role === 'member') {
-      // Register member in the list on first load
-      registerMember();
-    }
-
-    handleMissedTurns();
-    extendQueue();
+    if (role === 'member') registerMember();
     setSyncState('live', 'live');
-
     if (role === 'admin') {
       document.getElementById('admin-screen').querySelector('header .header-user').textContent = myName;
       showScreen('admin-screen');
@@ -256,10 +191,7 @@ function startListening(role) {
       showScreen('member-screen');
       renderMember();
     }
-  }, err => {
-    console.error(err);
-    setSyncState('err', 'error');
-  });
+  }, err => { console.error(err); setSyncState('err', 'error'); });
 
   db.ref('.info/connected').on('value', snap => {
     setSyncState(snap.val() ? 'live' : 'err', snap.val() ? 'live' : 'offline');
@@ -275,17 +207,11 @@ function save() {
 }
 
 // ── MEMBER REGISTRATION ───────────────────────────────────────────────────────
-// Called when a member logs in. Adds them to the list if not already there.
-// Does NOT auto-assign them to the schedule — admin does that.
 function registerMember() {
   if (!myName || !myDeviceId) return;
-
-  // Check if already registered by device
   const byDevice = state.members.find(m => m.deviceId === myDeviceId);
   if (byDevice) {
-    // Name changed on device — sync it
     if (byDevice.name !== myName) {
-      const old = byDevice.name;
       byDevice.name = myName;
       Object.keys(state.completions || {}).forEach(k => {
         if (state.completions[k].memberId === byDevice.id) state.completions[k].name = myName;
@@ -294,16 +220,8 @@ function registerMember() {
     }
     return;
   }
-
-  // Check by name (admin may have pre-added them)
   const byName = state.members.find(m => m.name.toLowerCase() === myName.toLowerCase() && !m.deviceId);
-  if (byName) {
-    byName.deviceId = myDeviceId;
-    save();
-    return;
-  }
-
-  // New person — add to members list but NOT to queue (admin assigns turns)
+  if (byName) { byName.deviceId = myDeviceId; save(); return; }
   const id = 'mbr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
   state.members.push({ id, name: myName, deviceId: myDeviceId, addedAt: Date.now(), inRotation: false });
   save();
@@ -320,77 +238,83 @@ function addDays(dateStr, n) {
   return dateKey(d);
 }
 
-// ── QUEUE ─────────────────────────────────────────────────────────────────────
-// Queue only contains members that admin has added to rotation (inRotation: true)
+// ── SCHEDULE ENGINE ───────────────────────────────────────────────────────────
+//
+// The schedule is a flat object { "2026-04-23": "memberId", ... } stored in Firebase.
+// Admin sets the base rotation order. We never auto-mutate past dates.
+//
+// getAssigneeForDate(dateStr):
+//   1. If that date has a manually set assignment → use it.
+//   2. Otherwise compute it by walking forward from the start of the schedule,
+//      but: if a day has no completion AND is not today, the same person repeats
+//      until they eventually wash. This means a person who misses days keeps
+//      getting assigned until they (or the admin) marks it done.
+
 function getRotationMembers() {
   return state.members.filter(m => m.inRotation);
 }
 
-function extendQueue() {
+// Returns the assigned memberId for a given date.
+// Core rule: a person stays "on duty" until they complete their turn.
+// Only then does the rotation advance to the next person.
+function getAssigneeForDate(targetDate) {
+  const rotation = getRotationMembers();
+  if (rotation.length === 0) return null;
+
+  // If admin has manually overridden this specific date, use that
+  if (state.schedule && state.schedule[targetDate]) {
+    return state.members.find(m => m.id === state.schedule[targetDate]) || null;
+  }
+
+  // Find the schedule start date and initial member
+  const startDate = state.scheduleStart;
+  const startMemberId = state.scheduleStartMember;
+  if (!startDate || !startMemberId) return null;
+
+  if (targetDate < startDate) return null;
+
+  // Walk from startDate to targetDate
+  // Advance rotation index only when a day was completed
+  let currentIdx = rotation.findIndex(m => m.id === startMemberId);
+  if (currentIdx === -1) currentIdx = 0;
+
+  let d = startDate;
+  while (d < targetDate) {
+    // Check if there's a manual override for this date
+    const overrideMember = state.schedule && state.schedule[d]
+      ? state.members.find(m => m.id === state.schedule[d])
+      : null;
+    const effectiveMemberId = overrideMember ? overrideMember.id : rotation[currentIdx]?.id;
+
+    if (state.completions && state.completions[d]) {
+      // Day was completed — advance to next person
+      const completedById = state.completions[d].memberId;
+      const completedIdx = rotation.findIndex(m => m.id === completedById);
+      currentIdx = completedIdx === -1
+        ? (currentIdx + 1) % rotation.length
+        : (completedIdx + 1) % rotation.length;
+    }
+    // If not completed: same person stays on duty — do NOT advance
+    d = addDays(d, 1);
+  }
+
+  // Check for manual override on targetDate itself
+  if (state.schedule && state.schedule[targetDate]) {
+    return state.members.find(m => m.id === state.schedule[targetDate]) || null;
+  }
+
+  return rotation[currentIdx] || null;
+}
+
+// Build schedule start if not set yet
+function ensureScheduleStart() {
   const rotation = getRotationMembers();
   if (rotation.length === 0) return;
+  if (state.scheduleStart) return; // already set, don't touch it
 
-  const tk = todayKey();
-  const targetEnd = addDays(tk, 30);
-
-  const sorted = [...(state.queue || [])].sort((a, b) => a.date.localeCompare(b.date));
-  let fillFrom, nextIdx;
-
-  if (sorted.length) {
-    const last = sorted[sorted.length - 1];
-    fillFrom = addDays(last.date, 1);
-    const lastIdx = rotation.findIndex(m => m.id === last.memberId);
-    nextIdx = lastIdx === -1 ? 0 : (lastIdx + 1) % rotation.length;
-  } else {
-    fillFrom = tk;
-    nextIdx = 0;
-  }
-
-  let changed = false;
-  while (fillFrom <= targetEnd) {
-    if (!state.queue.find(e => e.date === fillFrom)) {
-      state.queue.push({ date: fillFrom, memberId: rotation[nextIdx].id, isDebt: false });
-      nextIdx = (nextIdx + 1) % rotation.length;
-      changed = true;
-    }
-    fillFrom = addDays(fillFrom, 1);
-  }
-
-  if (changed) save();
-}
-
-function handleMissedTurns() {
-  const tk = todayKey();
-  const missed = (state.queue || []).filter(e =>
-    e.date < tk && !e.isDebt && !(state.completions && state.completions[e.date])
-  );
-  if (missed.length === 0) return;
-
-  state.queue = state.queue.filter(e =>
-    !(e.date < tk && !e.isDebt && !(state.completions && state.completions[e.date]))
-  );
-
-  let future = state.queue.filter(e => e.date >= tk).sort((a, b) => a.date.localeCompare(b.date));
-  missed.reverse().forEach(m => {
-    future.unshift({ date: '__reassign__', memberId: m.memberId, isDebt: true, originalDate: m.date });
-  });
-
-  let datePtr = tk;
-  const reassigned = future.map(entry => {
-    const e = { ...entry, date: datePtr };
-    datePtr = addDays(datePtr, 1);
-    return e;
-  });
-
-  state.queue = [...state.queue.filter(e => e.date < tk), ...reassigned];
+  state.scheduleStart = todayKey();
+  state.scheduleStartMember = rotation[0].id;
   save();
-}
-
-function getQueueEntry(dateStr) { return (state.queue || []).find(e => e.date === dateStr) || null; }
-function getAssigneeForDate(dateStr) {
-  const entry = getQueueEntry(dateStr);
-  if (!entry) return null;
-  return state.members.find(m => m.id === entry.memberId) || null;
 }
 
 // ── ADMIN: MEMBER MANAGEMENT ──────────────────────────────────────────────────
@@ -412,14 +336,7 @@ function adminToggleRotation(memberId) {
   const m = state.members.find(m => m.id === memberId);
   if (!m) return;
   m.inRotation = !m.inRotation;
-
-  if (!m.inRotation) {
-    // Remove from future queue
-    const tk = todayKey();
-    state.queue = state.queue.filter(e => !(e.date >= tk && e.memberId === memberId));
-  }
-
-  extendQueue();
+  ensureScheduleStart();
   save();
   renderAdmin();
   showToast(m.name + (m.inRotation ? ' added to rotation' : ' removed from rotation'));
@@ -429,15 +346,18 @@ function adminRemoveMember(memberId) {
   const m = state.members.find(m => m.id === memberId);
   if (!m) return;
   if (!confirm('Remove ' + m.name + '?')) return;
-  state.members = state.members.filter(m => m.id !== memberId);
-  const tk = todayKey();
-  state.queue = state.queue.filter(e => !(e.date >= tk && e.memberId === memberId));
-  extendQueue();
+  state.members = state.members.filter(x => x.id !== memberId);
+  // Remove manual overrides for this member
+  if (state.schedule) {
+    Object.keys(state.schedule).forEach(k => {
+      if (state.schedule[k] === memberId) delete state.schedule[k];
+    });
+  }
   save();
   renderAdmin();
 }
 
-// ── ADMIN: REASSIGN TURN ──────────────────────────────────────────────────────
+// ── ADMIN: REASSIGN A SPECIFIC DATE ──────────────────────────────────────────
 let reassignDateTarget = null;
 
 function openReassign(dateStr) {
@@ -452,116 +372,64 @@ function openReassign(dateStr) {
 
 function doReassign(memberId) {
   if (!reassignDateTarget) return;
-  const entry = getQueueEntry(reassignDateTarget);
-  if (entry) {
-    entry.memberId = memberId;
-  } else {
-    state.queue.push({ date: reassignDateTarget, memberId, isDebt: false });
-  }
-
-  // Rebalance the queue from this date forward so it stays alternating.
-  // Rule: after the reassigned date, the next person must be different from
-  // the reassigned person, continuing the round-robin from there.
-  rebalanceQueueFrom(reassignDateTarget);
-
+  if (!state.schedule) state.schedule = {};
+  state.schedule[reassignDateTarget] = memberId;
   save();
   closeModal();
   renderAdmin();
   showToast('Turn reassigned');
 }
 
-// Rebalance all future queue entries starting the day AFTER dateStr
-// so no one appears twice in a row and rotation stays fair.
-function rebalanceQueueFrom(fromDate) {
-  const rotation = getRotationMembers();
-  if (rotation.length < 2) return;
-
-  const tk = todayKey();
-  // Sort all future undone entries after fromDate
-  const pivot = getQueueEntry(fromDate);
-  if (!pivot) return;
-
-  const afterPivot = state.queue
-    .filter(e => e.date > fromDate && !(state.completions && state.completions[e.date]))
-    .sort((a, b) => a.date.localeCompare(b.date));
-
-  if (afterPivot.length === 0) return;
-
-  // Find where the reassigned member sits in rotation
-  let lastMemberId = pivot.memberId;
-  let nextIdx = rotation.findIndex(m => m.id === lastMemberId);
-  if (nextIdx === -1) nextIdx = 0;
-
-  afterPivot.forEach(entry => {
-    nextIdx = (nextIdx + 1) % rotation.length;
-    entry.memberId = rotation[nextIdx].id;
-    lastMemberId = entry.memberId;
-  });
-}
-
-// ── ADMIN: UNDO COMPLETION ────────────────────────────────────────────────────
-function undoCompletion(dateStr) {
-  if (!confirm('Remove the completion for ' + fmtDate(dateStr) + '?')) return;
-  delete state.completions[dateStr];
-  save();
-  renderAdmin();
-  showToast('Completion removed');
-}
-
-// ── ADMIN: MARK TODAY AS DONE ON BEHALF ──────────────────────────────────────
+// ── ADMIN: MARK DONE ON BEHALF (today) ───────────────────────────────────────
 function adminMarkTodayDone(memberId) {
   const member = state.members.find(m => m.id === memberId);
   if (!member) return;
   if (!confirm('Mark today as done on behalf of ' + member.name + '?')) return;
   const k = todayKey();
   if (!state.completions) state.completions = {};
-  state.completions[k] = {
-    memberId: member.id,
-    name: member.name,
-    timestamp: Date.now(),
-    markedByAdmin: true
-  };
+  state.completions[k] = { memberId: member.id, name: member.name, timestamp: Date.now(), markedByAdmin: true };
   save();
   renderAdmin();
-  showToast('Marked as done on behalf of ' + member.name + ' ✓');
+  showToast('Marked done on behalf of ' + member.name + ' ✓');
 }
 
-// ── ADMIN: MARK PAST DAY AS DONE ─────────────────────────────────────────────
+// ── ADMIN: MARK PAST MISSED DAY AS DONE ──────────────────────────────────────
 function adminMarkDone(dateStr, memberId, event) {
   if (event) event.stopPropagation();
   const member = state.members.find(m => m.id === memberId);
   if (!member) return;
   if (!confirm('Mark ' + fmtDate(dateStr) + ' as done by ' + member.name + '?')) return;
-
   if (!state.completions) state.completions = {};
   state.completions[dateStr] = {
     memberId: member.id,
     name: member.name,
-    timestamp: new Date(dateStr + 'T12:00:00').getTime(), // Use noon of that day
+    timestamp: new Date(dateStr + 'T12:00:00').getTime(),
     markedByAdmin: true
   };
-
-  // Remove this day from debt queue if it was flagged as missed
-  state.queue = state.queue.filter(e => !(e.isDebt && e.originalDate === dateStr));
-
   save();
   renderAdmin();
   showToast(fmtDate(dateStr) + ' marked as done ✓');
+}
+
+// ── ADMIN: UNDO COMPLETION ────────────────────────────────────────────────────
+function undoCompletion(dateStr) {
+  if (!confirm('Remove completion for ' + fmtDate(dateStr) + '?')) return;
+  delete state.completions[dateStr];
+  save();
+  if (myRole === 'admin') renderAdmin(); else renderMember();
+  showToast('Completion removed');
 }
 
 // ── MEMBER: MARK DONE ─────────────────────────────────────────────────────────
 function markDone() {
   const k = todayKey();
   const assignee = getAssigneeForDate(k);
-  if (!assignee) return;
+  if (!assignee) { showToast('No schedule set — ask the admin'); return; }
 
   const me = state.members.find(m => m.deviceId === myDeviceId);
   if (!me) { showToast('Your device is not registered'); return; }
-
-  if (assignee.id !== me.id) {
-    showToast("It's " + assignee.name + "'s turn! 👀");
-    return;
-  }
+  if (assignee.id !== me.id) { showToast("It's " + assignee.name + "'s turn! 👀"); return; }
+  if (state.completions && state.completions[k]) { showToast('Already marked done'); return; }
 
   if (!state.completions) state.completions = {};
   state.completions[k] = { memberId: me.id, name: me.name, timestamp: Date.now() };
@@ -575,77 +443,66 @@ function renderMember() {
   const k = todayKey();
   const assignee = getAssigneeForDate(k);
   const comp = state.completions && state.completions[k];
-  const entry = getQueueEntry(k);
   const me = state.members.find(m => m.deviceId === myDeviceId);
 
-  // Hero date
   document.getElementById('member-hero-date').textContent =
     new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
   document.getElementById('member-hero-name').textContent = assignee ? assignee.name : '—';
 
-  const debtBadge = entry && entry.isDebt
-    ? `<div class="debt-badge">⚠ Makeup wash — skipped on ${fmtDate(entry.originalDate)}</div>` : '';
-
   const action = document.getElementById('member-hero-action');
+
   if (comp) {
-    action.innerHTML = `${debtBadge}
+    action.innerHTML = `
       <div class="done-status">
         <span class="done-check">✓</span>
         <div><div class="done-text">Done by ${comp.name}</div><div class="done-time">${fmtTime(comp.timestamp)}</div></div>
       </div>`;
-  } else if (assignee && me && assignee.id === me.id) {
-    action.innerHTML = `${debtBadge}<button class="btn-done" onclick="markDone()">✓ I washed the dishes</button>`;
-  } else if (assignee) {
-    action.innerHTML = `${debtBadge}<div class="btn-not-yours">Waiting for ${assignee.name}…</div>`;
-  } else {
+  } else if (!assignee) {
     action.innerHTML = '<div class="empty-msg">No schedule yet — ask the admin to set it up</div>';
+  } else if (me && assignee.id === me.id) {
+    action.innerHTML = `<button class="btn-done" onclick="markDone()">✓ I washed the dishes</button>`;
+  } else {
+    action.innerHTML = `<div class="btn-not-yours">Waiting for ${assignee.name}…</div>`;
   }
 
-  // Week
-  const weekEl = document.getElementById('member-week-list');
-  weekEl.innerHTML = buildWeekHTML(false);
+  document.getElementById('member-week-list').innerHTML = buildWeekHTML(false);
 
-  // Members
-  const memberEl = document.getElementById('member-member-list');
-  memberEl.innerHTML = state.members.filter(m => m.inRotation).map((m, i) => {
-    const isYou = m.deviceId === myDeviceId;
-    const counts = countCompletions();
-    return `<div class="member-row">
-      <div class="member-avatar av-${i % 6}">${m.name[0].toUpperCase()}</div>
-      <div class="member-name">${m.name}</div>
-      <div class="member-count">${counts[m.id] || 0} done</div>
-      ${isYou ? '<span class="member-you">you</span>' : ''}
-    </div>`;
-  }).join('') || '<div class="empty-msg">Waiting for admin to set up rotation</div>';
+  const counts = countCompletions();
+  document.getElementById('member-member-list').innerHTML =
+    state.members.filter(m => m.inRotation).map((m, i) => {
+      const isYou = m.deviceId === myDeviceId;
+      return `<div class="member-row">
+        <div class="member-avatar av-${i % 6}">${m.name[0].toUpperCase()}</div>
+        <div class="member-name">${m.name}</div>
+        <div class="member-count">${counts[m.id] || 0} done</div>
+        ${isYou ? '<span class="member-you">you</span>' : ''}
+      </div>`;
+    }).join('') || '<div class="empty-msg">Waiting for admin to set up rotation</div>';
 
-  // History
   document.getElementById('member-history-list').innerHTML = buildHistoryHTML(false);
 }
 
 // ── RENDER: ADMIN ─────────────────────────────────────────────────────────────
 function renderAdmin() {
+  ensureScheduleStart();
   const k = todayKey();
   const assignee = getAssigneeForDate(k);
   const comp = state.completions && state.completions[k];
-  const entry = getQueueEntry(k);
 
   document.getElementById('admin-hero-date').textContent =
     new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
   document.getElementById('admin-hero-name').textContent = assignee ? assignee.name : '—';
 
-  const debtBadge = entry && entry.isDebt
-    ? `<div class="debt-badge">⚠ Makeup wash — skipped on ${fmtDate(entry.originalDate)}</div>` : '';
-
   const heroAction = document.getElementById('admin-hero-action');
   if (comp) {
-    heroAction.innerHTML = `${debtBadge}
+    heroAction.innerHTML = `
       <div class="done-status">
         <span class="done-check">✓</span>
         <div style="flex:1"><div class="done-text">Done by ${comp.name}</div><div class="done-time">${fmtTime(comp.timestamp)}</div></div>
         <button class="undo-btn" onclick="undoCompletion('${k}')">Undo</button>
       </div>`;
   } else if (assignee) {
-    heroAction.innerHTML = `${debtBadge}
+    heroAction.innerHTML = `
       <div class="behalf-wrap">
         <div class="btn-not-yours">Waiting for ${assignee.name}…</div>
         <button class="btn-behalf" onclick="adminMarkTodayDone('${assignee.id}')">
@@ -656,15 +513,12 @@ function renderAdmin() {
     heroAction.innerHTML = '<div class="empty-msg">Add members to rotation below</div>';
   }
 
-  // Schedule
   document.getElementById('admin-week-list').innerHTML = buildWeekHTML(true);
 
-  // Members
   const counts = countCompletions();
-  const allMembers = state.members;
-  document.getElementById('admin-member-list').innerHTML = allMembers.length
-    ? allMembers.map((m, i) => {
-        const inRotation = m.inRotation;
+  document.getElementById('admin-member-list').innerHTML = state.members.length
+    ? state.members.map((m, i) => {
+        const inRotation = !!m.inRotation;
         const registered = !!m.deviceId;
         return `<div class="member-row">
           <div class="member-avatar av-${i % 6}">${m.name[0].toUpperCase()}</div>
@@ -672,9 +526,7 @@ function renderAdmin() {
             ${m.name}
             ${!registered ? '<span class="unregistered">not joined</span>' : ''}
           </div>
-          <div class="member-stats">
-            <span class="member-count">${counts[m.id] || 0} done</span>
-          </div>
+          <div class="member-stats"><span class="member-count">${counts[m.id] || 0} done</span></div>
           <button class="toggle-btn ${inRotation ? 'in' : 'out'}" onclick="adminToggleRotation('${m.id}')">
             ${inRotation ? 'In rotation' : 'Add to rotation'}
           </button>
@@ -683,7 +535,6 @@ function renderAdmin() {
       }).join('')
     : '<div class="empty-msg">No members yet</div>';
 
-  // History
   document.getElementById('admin-history-list').innerHTML = buildHistoryHTML(true);
 }
 
@@ -693,32 +544,30 @@ function buildWeekHTML(isAdmin) {
   const base = new Date();
   const tk = todayKey();
   let html = '';
-  // Show 7 past days for admin (so they can mark missed ones), 2 for members
   const pastDays = isAdmin ? -7 : -2;
+
   for (let i = pastDays; i <= 9; i++) {
     const d = new Date(base);
     d.setDate(base.getDate() + i);
     const k = dateKey(d);
     const assignee = getAssigneeForDate(k);
-    const entry = getQueueEntry(k);
     const done = !!(state.completions && state.completions[k]);
     const isToday = k === tk;
     const isPast = k < tk;
-    const isMissed = isPast && !done;
+    const isMissed = isPast && !done && !!assignee;
 
     let badge = '';
     if (done) badge = '<span class="week-badge badge-done">Done ✓</span>';
     else if (isToday) badge = '<span class="week-badge badge-today">Today</span>';
     else if (isMissed) badge = '<span class="week-badge badge-miss">Missed</span>';
-    else if (entry && entry.isDebt) badge = '<span class="week-badge badge-debt">Makeup</span>';
 
-    // Admin actions: missed days get a "Mark done" button, future/today gets reassign
     let actions = '';
     if (isAdmin) {
       if (isMissed && assignee) {
-        // Mark done for a specific person on that missed day
         actions = `<button class="mark-done-sm" onclick="adminMarkDone('${k}','${assignee.id}',event)">Mark done</button>`;
-      } else if (!done) {
+      } else if (!done && !isPast) {
+        actions = `<button class="edit-hint-btn" onclick="openReassign('${k}')">edit</button>`;
+      } else if (isToday && !done && assignee) {
         actions = `<button class="edit-hint-btn" onclick="openReassign('${k}')">edit</button>`;
       }
     }
@@ -734,19 +583,21 @@ function buildWeekHTML(isAdmin) {
 }
 
 function buildHistoryHTML(isAdmin) {
-  if (!state.completions || !Object.keys(state.completions).length) {
+  if (!state.completions || !Object.keys(state.completions).length)
     return '<div class="empty-msg">No completions yet</div>';
-  }
+  const me = state.members.find(m => m.deviceId === myDeviceId);
   const sorted = Object.entries(state.completions).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 20);
-  return sorted.map(([k, c]) => `
-    <div class="history-row">
+  return sorted.map(([k, c]) => {
+    const canUndo = isAdmin || (me && (c.memberId === me.id || c.name.toLowerCase() === myName.toLowerCase()));
+    return `<div class="history-row">
       <div class="history-date">${fmtDate(k)}</div>
       <div class="history-who">${c.name}</div>
       <div class="history-time">${fmtTime(c.timestamp)}</div>
-      ${isAdmin
+      ${canUndo
         ? `<button class="undo-btn-sm" onclick="undoCompletion('${k}')">Undo</button>`
         : '<div class="history-tick">✓</div>'}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function countCompletions() {
@@ -769,22 +620,15 @@ function openChangePassword() {
   document.getElementById('change-pw-modal').style.display = 'flex';
 }
 
-// ── SYNC STATE ────────────────────────────────────────────────────────────────
+// ── SYNC ──────────────────────────────────────────────────────────────────────
 function setSyncState(status, label) {
-  ['sync-dot', 'admin-sync-dot'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.className = 'sync-dot ' + status;
-  });
-  ['sync-text', 'admin-sync-text'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = label;
-  });
+  ['sync-dot','admin-sync-dot'].forEach(id => { const el = document.getElementById(id); if (el) el.className = 'sync-dot ' + status; });
+  ['sync-text','admin-sync-text'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = label; });
 }
 
 function showToast(msg) {
   const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
+  t.textContent = msg; t.classList.add('show');
   clearTimeout(window._toastTimer);
   window._toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
 }
@@ -792,8 +636,6 @@ function showToast(msg) {
 setInterval(() => {
   const n = new Date();
   if (n.getHours() === 0 && n.getMinutes() === 0) {
-    handleMissedTurns();
-    extendQueue();
     if (myRole === 'admin') renderAdmin();
     else if (myRole === 'member') renderMember();
   }
