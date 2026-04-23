@@ -181,6 +181,7 @@ function startListening(role) {
       if (!state.schedule) state.schedule = {};
     }
     if (role === 'member') registerMember();
+    ensureScheduleStart();
     setSyncState('live', 'live');
     if (role === 'admin') {
       document.getElementById('admin-screen').querySelector('header .header-user').textContent = myName;
@@ -306,14 +307,44 @@ function getAssigneeForDate(targetDate) {
   return rotation[currentIdx] || null;
 }
 
-// Build schedule start if not set yet
+// Build schedule start if not set yet.
+// Also handles migration from old queue-based data.
 function ensureScheduleStart() {
   const rotation = getRotationMembers();
   if (rotation.length === 0) return;
-  if (state.scheduleStart) return; // already set, don't touch it
+  if (state.scheduleStart && state.scheduleStartMember) {
+    // Validate that scheduleStartMember is still in rotation
+    const still = rotation.find(m => m.id === state.scheduleStartMember);
+    if (still) return; // all good
+    // Member was removed — reset to first in rotation
+    state.scheduleStartMember = rotation[0].id;
+    save();
+    return;
+  }
 
-  state.scheduleStart = todayKey();
-  state.scheduleStartMember = rotation[0].id;
+  // Not set yet — figure out the best start point
+
+  // If there are existing completions, start from the earliest completion date
+  // so history is preserved correctly
+  const completionDates = Object.keys(state.completions || {}).sort();
+  if (completionDates.length > 0) {
+    const earliest = completionDates[0];
+    const firstComp = state.completions[earliest];
+    // Find who was completed first and who should have been before them
+    const completedMemberIdx = rotation.findIndex(m => m.id === firstComp.memberId);
+    // The start member is whoever was first in rotation on that date
+    // Best guess: use the completed member as start (they may have been first)
+    state.scheduleStart = earliest;
+    state.scheduleStartMember = rotation[completedMemberIdx === -1 ? 0 : completedMemberIdx].id;
+  } else {
+    // No history — start today with first rotation member
+    state.scheduleStart = todayKey();
+    state.scheduleStartMember = rotation[0].id;
+  }
+
+  // Clean up old queue data if present
+  if (state.queue) delete state.queue;
+
   save();
 }
 
@@ -540,21 +571,29 @@ function renderAdmin() {
 
 // ── SHARED RENDER HELPERS ─────────────────────────────────────────────────────
 function buildWeekHTML(isAdmin) {
-  if (!getRotationMembers().length) return '<div class="empty-msg">No rotation set up yet</div>';
+  const rotation = getRotationMembers();
   const base = new Date();
   const tk = todayKey();
   let html = '';
   const pastDays = isAdmin ? -7 : -2;
+  let hasAnyRow = false;
 
   for (let i = pastDays; i <= 9; i++) {
     const d = new Date(base);
     d.setDate(base.getDate() + i);
     const k = dateKey(d);
     const assignee = getAssigneeForDate(k);
-    const done = !!(state.completions && state.completions[k]);
+    const comp = state.completions && state.completions[k];
+    const done = !!comp;
     const isToday = k === tk;
     const isPast = k < tk;
     const isMissed = isPast && !done && !!assignee;
+
+    // For past days with no assignee but with a completion, still show it
+    const displayName = assignee ? assignee.name : (comp ? comp.name : (rotation.length ? '—' : ''));
+    if (!displayName && !done) continue; // skip empty future rows if no rotation yet
+
+    hasAnyRow = true;
 
     let badge = '';
     if (done) badge = '<span class="week-badge badge-done">Done ✓</span>';
@@ -563,21 +602,28 @@ function buildWeekHTML(isAdmin) {
 
     let actions = '';
     if (isAdmin) {
-      if (isMissed && assignee) {
+      if (done) {
+        // Undo button for any completed day in the schedule view
+        actions = `<button class="undo-btn-sm" onclick="undoCompletion('${k}')">Undo</button>`;
+      } else if (isMissed && assignee) {
         actions = `<button class="mark-done-sm" onclick="adminMarkDone('${k}','${assignee.id}',event)">Mark done</button>`;
-      } else if (!done && !isPast) {
-        actions = `<button class="edit-hint-btn" onclick="openReassign('${k}')">edit</button>`;
-      } else if (isToday && !done && assignee) {
+      } else if (assignee) {
         actions = `<button class="edit-hint-btn" onclick="openReassign('${k}')">edit</button>`;
       }
     }
 
     html += `<div class="week-row${isToday ? ' is-today' : ''}${isMissed && isAdmin ? ' missed-row' : ''}">
       <div class="week-day${isToday ? ' today' : ''}${isMissed ? ' missed' : ''}">${isToday ? 'TODAY' : DAYS[d.getDay()].toUpperCase()}</div>
-      <div class="week-person">${assignee ? assignee.name : '—'}</div>
+      <div class="week-person">${displayName}</div>
       ${badge}
       ${actions}
     </div>`;
+  }
+
+  if (!hasAnyRow) {
+    return rotation.length
+      ? '<div class="empty-msg">No activity yet — rotation starts today</div>'
+      : '<div class="empty-msg">No rotation set up yet</div>';
   }
   return html;
 }
@@ -586,12 +632,16 @@ function buildHistoryHTML(isAdmin) {
   if (!state.completions || !Object.keys(state.completions).length)
     return '<div class="empty-msg">No completions yet</div>';
   const me = state.members.find(m => m.deviceId === myDeviceId);
-  const sorted = Object.entries(state.completions).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 20);
+  const sorted = Object.entries(state.completions)
+    .filter(([k, c]) => c && c.name) // skip malformed entries
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .slice(0, 30);
+  if (!sorted.length) return '<div class="empty-msg">No completions yet</div>';
   return sorted.map(([k, c]) => {
-    const canUndo = isAdmin || (me && (c.memberId === me.id || c.name.toLowerCase() === myName.toLowerCase()));
+    const canUndo = isAdmin || (me && (c.memberId === me.id || (c.name || '').toLowerCase() === (myName || '').toLowerCase()));
     return `<div class="history-row">
       <div class="history-date">${fmtDate(k)}</div>
-      <div class="history-who">${c.name}</div>
+      <div class="history-who">${c.name || '?'}</div>
       <div class="history-time">${fmtTime(c.timestamp)}</div>
       ${canUndo
         ? `<button class="undo-btn-sm" onclick="undoCompletion('${k}')">Undo</button>`
