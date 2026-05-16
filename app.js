@@ -1,12 +1,40 @@
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
-const EMOJIS = ['🐱','🐶','🦊','🐼','🐨','🐸','🦁','🐯','🐻','🐺',
-                '🦄','🐙','🦋','🐧','🦅','🌵','🍀','🌸','⭐','🔥'];
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+// DiceBear avatar system — no auth, no key needed
+// Each avatar = { style, seed } → URL generated on the fly
+const AVATAR_STYLES = [
+  { id: 'adventurer',       label: 'Adventurer' },
+  { id: 'avataaars',        label: 'Cartoon'    },
+  { id: 'lorelei',          label: 'Lorelei'    },
+  { id: 'pixel-art',        label: 'Pixel'      },
+  { id: 'big-smile',        label: 'Big Smile'  },
+  { id: 'fun-emoji',        label: 'Fun'        },
+];
+
+// Preset seeds that produce nice varied characters
+const AVATAR_SEEDS = [
+  'Sakura','Hiro','Luna','Kai','Mika','Ryu','Nami','Zoro',
+  'Yuki','Ren','Aoi','Kira','Sora','Akira','Hana','Daisuke'
+];
+
+function avatarUrl(style, seed, size = 80) {
+  return `https://api.dicebear.com/9.x/${style}/svg?seed=${encodeURIComponent(seed)}&size=${size}&radius=50`;
+}
+
+// Store avatar as "style:seed" string
+function parseAvatar(str) {
+  if (!str || !str.includes(':')) return { style: 'adventurer', seed: 'default' };
+  const [style, ...rest] = str.split(':');
+  return { style, seed: rest.join(':') };
+}
+function serializeAvatar(style, seed) { return style + ':' + seed; }
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let db = null, appRef = null;
-let myId = null, myName = null, myEmoji = '🐱';
-let selectedEmoji = null;
+let myId = null, myName = null;
+let myAvatar = 'adventurer:Sakura'; // default
+let selectedAvatar = null; // during setup/edit
 let state = { members: {}, completions: {}, scheduleStart: null, scheduleOrder: [] };
 
 // ── DEVICE ID ─────────────────────────────────────────────────────────────────
@@ -20,9 +48,9 @@ function getDeviceId() {
 window.addEventListener('DOMContentLoaded', () => {
   myId = getDeviceId();
   myName = localStorage.getItem('dd_name');
-  myEmoji = localStorage.getItem('dd_emoji') || '🐱';
+  myAvatar = localStorage.getItem('dd_avatar') || 'adventurer:Sakura';
 
-  buildAvatarPicker('setup-avatar-row', (e) => { selectedEmoji = e; });
+  buildSetupPicker();
 
   document.getElementById('setup-name').addEventListener('keydown', ev => { if (ev.key === 'Enter') joinApp(); });
 
@@ -65,8 +93,8 @@ function onStateLoaded() {
   if (isMember) {
     // Update my info if changed
     const me = state.members[myId];
-    if (me.name !== myName || me.emoji !== myEmoji) {
-      save({ [`members/${myId}/name`]: myName, [`members/${myId}/emoji`]: myEmoji });
+    if (me.name !== myName || me.avatar !== myAvatar) {
+      save({ [`members/${myId}/name`]: myName, [`members/${myId}/avatar`]: myAvatar });
     }
     showMain();
   } else {
@@ -80,13 +108,13 @@ function joinApp() {
   if (!name) { showToast('Enter your name first'); return; }
 
   myName = name;
-  myEmoji = selectedEmoji || myEmoji;
+  myAvatar = selectedAvatar || myAvatar;
   localStorage.setItem('dd_name', myName);
-  localStorage.setItem('dd_emoji', myEmoji);
+  localStorage.setItem('dd_avatar', myAvatar);
 
   // Add to members
   const updates = {};
-  updates[`members/${myId}`] = { id: myId, name: myName, emoji: myEmoji, joinedAt: Date.now() };
+  updates[`members/${myId}`] = { id: myId, name: myName, avatar: myAvatar, joinedAt: Date.now() };
 
   // Add to schedule order if not already in it
   const order = [...(state.scheduleOrder || [])];
@@ -173,7 +201,7 @@ function markDone() {
   if (!assignee) { showToast('No schedule yet'); return; }
   if (assignee.id !== myId) { showToast("It's " + assignee.name + "'s turn!"); return; }
 
-  save({ [`completions/${k}`]: { memberId: myId, name: myName, emoji: myEmoji, timestamp: Date.now() } });
+  save({ [`completions/${k}`]: { memberId: myId, name: myName, avatar: myAvatar, timestamp: Date.now() } });
   showToast('Done! ✓');
 }
 
@@ -210,7 +238,14 @@ function renderMain() {
 function renderTopBar() {
   const me = state.members[myId];
   const btn = document.getElementById('my-profile-btn');
-  if (btn) btn.textContent = me ? (me.emoji || '🐱') : '?';
+  if (btn) {
+    if (me && me.avatar) {
+      const { style, seed } = parseAvatar(me.avatar);
+      btn.innerHTML = `<img src="${avatarUrl(style, seed, 32)}" style="width:32px;height:32px;border-radius:50%;display:block" alt="avatar" onerror="this.style.display='none'" />`;
+    } else {
+      btn.textContent = '?';
+    }
+  }
 }
 
 function renderHero() {
@@ -227,10 +262,11 @@ function renderHero() {
   const actionEl = document.getElementById('today-action');
 
   if (assignee) {
-    avatarWrap.textContent = assignee.emoji || '🐱';
+    const av = parseAvatar(assignee.avatar || '');
+    avatarWrap.innerHTML = `<img src="${avatarUrl(av.style, av.seed, 56)}" style="width:56px;height:56px;border-radius:50%;display:block" alt="${assignee.name}" />`;
     nameEl.textContent = assignee.name;
   } else {
-    avatarWrap.textContent = '🍽';
+    avatarWrap.innerHTML = '🍽';
     nameEl.textContent = 'No one yet';
   }
 
@@ -304,7 +340,9 @@ function renderSchedule() {
 
     const dayLabel = isToday ? 'TODAY' : DAYS[d.getDay()].toUpperCase();
     const displayName = assignee ? assignee.name : (comp ? comp.name : '—');
-    const displayEmoji = assignee ? (assignee.emoji || '🐱') : (comp ? (comp.emoji || '🐱') : '');
+    const avStr = assignee ? assignee.avatar : (comp ? comp.avatar : '');
+    const avParsed = parseAvatar(avStr || '');
+    const displayAvatar = avStr ? `<img src="${avatarUrl(avParsed.style, avParsed.seed, 28)}" style="width:28px;height:28px;border-radius:50%" alt="" />` : '';
 
     let badge = '';
     if (done) badge = '<span class="sched-badge badge-done">Done ✓</span>';
@@ -321,7 +359,7 @@ function renderSchedule() {
 
     html += `<div class="sched-row${isToday ? ' is-today' : ''}${isMissed ? ' is-missed' : ''}">
       <div class="sched-day${isToday ? ' today' : ''}${isMissed ? ' missed' : ''}">${dayLabel}</div>
-      <div class="sched-avatar">${displayEmoji}</div>
+      <div class="sched-avatar">${displayAvatar}</div>
       <div class="sched-name">${displayName}</div>
       ${badge}
       ${action}
@@ -334,7 +372,7 @@ function renderSchedule() {
 function markMissedDone(dateStr, memberId) {
   if (memberId !== myId) { showToast("That's not your turn"); return; }
   if (!confirm('Mark ' + fmtDate(dateStr) + ' as done?')) return;
-  save({ [`completions/${dateStr}`]: { memberId: myId, name: myName, emoji: myEmoji, timestamp: Date.now(), lateEntry: true } });
+  save({ [`completions/${dateStr}`]: { memberId: myId, name: myName, avatar: myAvatar, timestamp: Date.now(), lateEntry: true } });
   showToast('Marked as done ✓');
 }
 
@@ -352,8 +390,9 @@ function renderMembers() {
 
   el.innerHTML = members.map(m => {
     const isMe = m.id === myId;
+    const mAv = parseAvatar(m.avatar || '');
     return `<div class="member-row">
-      <div class="member-avatar">${m.emoji || '🐱'}</div>
+      <div class="member-avatar"><img src="${avatarUrl(mAv.style, mAv.seed, 40)}" style="width:40px;height:40px;border-radius:50%;display:block" alt="${m.name}" /></div>
       <div class="member-name">${m.name}</div>
       ${isMe ? '<span class="member-you">you</span>' : ''}
       <div class="member-count">${counts[m.id] || 0} done</div>
@@ -372,8 +411,9 @@ function renderHistory() {
 
   el.innerHTML = comps.map(([k, c]) => {
     const isMe = c.memberId === myId;
+    const hAv = parseAvatar(c.avatar || '');
     return `<div class="hist-row">
-      <div class="hist-avatar">${c.emoji || '🐱'}</div>
+      <div class="hist-avatar"><img src="${avatarUrl(hAv.style, hAv.seed, 28)}" style="width:28px;height:28px;border-radius:50%;display:block" alt="${c.name}" /></div>
       <div class="hist-name">${c.name}</div>
       <div>
         <div class="hist-date">${fmtDate(k)}</div>
@@ -385,67 +425,71 @@ function renderHistory() {
 }
 
 // ── PROFILE MODAL ─────────────────────────────────────────────────────────────
-function buildAvatarPicker(containerId, onSelect) {
-  const el = document.getElementById(containerId);
-  if (!el) return;
-  el.innerHTML = EMOJIS.map(e => `
-    <div class="avatar-opt${e === myEmoji ? ' selected' : ''}" onclick="selectEmoji(this,'${e}','${containerId}',${onSelect.name ? "window." + onSelect.name : 'null'})">
-      ${e}
-    </div>`).join('');
-}
+// ── DICEBEAR AVATAR PICKER ────────────────────────────────────────────────────
+// Shows a style tab bar + seed grid. Selecting any avatar updates immediately.
 
-// Simpler global approach
-let _pickerCallback = null;
-function buildEmojiGrid(containerId, currentEmoji, callback) {
-  const el = document.getElementById(containerId);
-  if (!el) return;
-  _pickerCallback = callback;
-  el.innerHTML = EMOJIS.map(e => `
-    <div class="emoji-opt${e === currentEmoji ? ' selected' : ''}" data-emoji="${e}" onclick="pickEmoji(this,'${e}')">
-      ${e}
-    </div>`).join('');
-}
-
-function pickEmoji(el, emoji) {
-  document.querySelectorAll('.emoji-opt').forEach(e => e.classList.remove('selected'));
-  el.classList.add('selected');
-  if (_pickerCallback) _pickerCallback(emoji);
-}
-
-// Setup screen avatar pick
 function buildSetupPicker() {
   const el = document.getElementById('setup-avatar-row');
   if (!el) return;
-  el.innerHTML = EMOJIS.map(e => `
-    <div class="avatar-opt${e === (selectedEmoji || myEmoji) ? ' selected' : ''}" onclick="pickSetupEmoji(this,'${e}')">${e}</div>`).join('');
+  const cur = parseAvatar(selectedAvatar || myAvatar);
+  el.innerHTML = buildPickerHTML(cur.style, cur.seed, 'setup');
 }
 
-function pickSetupEmoji(el, emoji) {
-  document.querySelectorAll('.avatar-opt').forEach(e => e.classList.remove('selected'));
+function buildPickerHTML(activeStyle, activeSeed, context) {
+  const tabsHTML = AVATAR_STYLES.map(s => `
+    <button class="av-tab${s.id === activeStyle ? ' active' : ''}"
+      onclick="switchAvatarStyle('${s.id}','${context}')">${s.label}</button>
+  `).join('');
+
+  const gridHTML = AVATAR_SEEDS.map(seed => {
+    const url = avatarUrl(activeStyle, seed, 56);
+    const isSelected = seed === activeSeed && activeStyle === activeStyle;
+    return `<div class="av-card${seed === activeSeed ? ' selected' : ''}"
+      onclick="selectAvatarCard(this,'${activeStyle}','${seed}','${context}')">
+      <img src="${url}" alt="${seed}" loading="lazy"
+        style="width:56px;height:56px;border-radius:50%;display:block"
+        onerror="this.src='https://api.dicebear.com/9.x/fun-emoji/svg?seed=${seed}&size=56'" />
+    </div>`;
+  }).join('');
+
+  return `<div class="av-tabs">${tabsHTML}</div><div class="av-grid">${gridHTML}</div>`;
+}
+
+function switchAvatarStyle(style, context) {
+  const cur = parseAvatar(context === 'setup' ? (selectedAvatar || myAvatar) : myAvatar);
+  const el = document.getElementById(context === 'setup' ? 'setup-avatar-row' : 'emoji-grid');
+  if (el) el.innerHTML = buildPickerHTML(style, cur.seed, context);
+}
+
+function selectAvatarCard(el, style, seed, context) {
+  document.querySelectorAll('.av-card').forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
-  selectedEmoji = emoji;
+  const av = serializeAvatar(style, seed);
+  if (context === 'setup') {
+    selectedAvatar = av;
+  } else {
+    // Profile modal — apply immediately
+    myAvatar = av;
+    localStorage.setItem('dd_avatar', av);
+    const big = document.getElementById('modal-avatar-big');
+    if (big) big.innerHTML = `<img src="${avatarUrl(style, seed, 80)}" style="width:80px;height:80px;border-radius:50%;display:block" alt="avatar" />`;
+    save({ [`members/${myId}/avatar`]: av });
+    renderMain();
+  }
 }
-
-// Rebuild setup picker on load
-window.addEventListener('DOMContentLoaded', () => {
-  setTimeout(buildSetupPicker, 100);
-});
 
 function showProfileModal() {
   const me = state.members[myId];
   if (!me) return;
+  const av = parseAvatar(me.avatar || myAvatar);
 
-  document.getElementById('modal-avatar-big').textContent = me.emoji || '🐱';
+  const bigEl = document.getElementById('modal-avatar-big');
+  bigEl.innerHTML = `<img src="${avatarUrl(av.style, av.seed, 80)}" style="width:80px;height:80px;border-radius:50%;display:block" alt="avatar" />`;
   document.getElementById('modal-name-display').textContent = me.name;
   document.getElementById('modal-name-input').value = me.name;
 
-  buildEmojiGrid('emoji-grid', me.emoji || '🐱', (emoji) => {
-    myEmoji = emoji;
-    document.getElementById('modal-avatar-big').textContent = emoji;
-    save({ [`members/${myId}/emoji`]: emoji });
-    localStorage.setItem('dd_emoji', emoji);
-    renderMain();
-  });
+  const gridEl = document.getElementById('emoji-grid');
+  gridEl.innerHTML = buildPickerHTML(av.style, av.seed, 'modal');
 
   document.getElementById('profile-modal').style.display = 'flex';
 }
@@ -461,8 +505,6 @@ function saveName() {
   myName = name;
   localStorage.setItem('dd_name', name);
   document.getElementById('modal-name-display').textContent = name;
-
-  // Update all completions with old name
   const updates = {};
   updates[`members/${myId}/name`] = name;
   Object.entries(state.completions || {}).forEach(([k, c]) => {
