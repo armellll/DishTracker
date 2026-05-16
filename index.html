@@ -1,191 +1,111 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Dish Duty</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;700;900&family=Archivo+Narrow:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800;900&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="style.css"/>
 </head>
 <body>
-<div id="app">
 
-  <!-- ── LANDING SCREEN (first visit) ── -->
-  <div id="landing-screen" class="screen active">
-    <div class="center-wrap">
-      <div class="big-icon">🍽</div>
-      <h1>Dish Duty</h1>
-      <p class="tagline">No more arguments about whose turn it is.</p>
-      <div class="landing-card">
-        <button class="btn-primary" onclick="showScreen('join-screen')">Join as member</button>
-        <button class="btn-secondary" onclick="showScreen('admin-login-screen')">Admin login</button>
+<!-- SETUP SCREEN -->
+<div id="setup-screen" class="screen active">
+  <div class="setup-wrap">
+    <div class="setup-top">
+      <div class="app-wordmark">dish<span>duty</span></div>
+      <p class="setup-tagline">Track who washes the dishes.<br/>No arguments, no excuses.</p>
+    </div>
+    <div class="setup-card">
+      <div class="field-label">Pick an avatar (optional)</div>
+      <div class="avatar-pick-row" id="setup-avatar-row"></div>
+      <div class="field-label" style="margin-top:16px">Your name</div>
+      <input id="setup-name" type="text" placeholder="e.g. Armel" maxlength="25" autocomplete="off"/>
+      <button class="btn-join" onclick="joinApp()">Join</button>
+    </div>
+    <div class="already-joined" id="already-joined" style="display:none">
+      <p class="already-label">Already in the rotation</p>
+      <div id="already-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN SCREEN -->
+<div id="main-screen" class="screen">
+  <div class="top-bar">
+    <div class="app-wordmark sm">dish<span>duty</span></div>
+    <div class="top-bar-right">
+      <div class="sync-pill" id="sync-pill">
+        <span class="sync-dot" id="sync-dot"></span>
+        <span id="sync-label">live</span>
       </div>
+      <button class="my-profile-btn" id="my-profile-btn" onclick="showProfileModal()"></button>
     </div>
   </div>
 
-  <!-- ── JOIN SCREEN ── -->
-  <div id="join-screen" class="screen">
-    <div class="center-wrap">
-      <button class="back-btn" onclick="showScreen('landing-screen')">← Back</button>
-      <div class="big-icon">👋</div>
-      <h1>Join the rotation</h1>
-      <p class="tagline">Enter your name to join. The admin will assign your turns.</p>
-      <div class="landing-card">
-        <label class="field-label">Your name</label>
-        <input id="join-name" type="text" placeholder="e.g. Maria" maxlength="25" autocomplete="off" />
-        <button class="btn-primary" onclick="joinAsMember()">Join</button>
+  <div class="page-scroll">
+
+    <!-- TODAY HERO -->
+    <div class="today-hero">
+      <div class="today-meta">
+        <span id="today-dayname" class="today-dayname"></span>
+        <span id="today-fulldate" class="today-fulldate"></span>
       </div>
+      <div class="today-label">On duty today</div>
+      <div class="today-person-row">
+        <div class="today-avatar-wrap" id="today-avatar-wrap"></div>
+        <div class="today-name" id="today-name">—</div>
+      </div>
+      <div id="today-action"></div>
     </div>
-  </div>
 
-  <!-- ── ADMIN LOGIN SCREEN ── -->
-  <div id="admin-login-screen" class="screen">
-    <div class="center-wrap">
-      <button class="back-btn" onclick="showScreen('landing-screen')">← Back</button>
-      <div class="big-icon">🔐</div>
-      <h1>Admin login</h1>
-      <p class="tagline">Enter the admin password to manage the rotation.</p>
-      <div class="landing-card">
-        <label class="field-label">Password</label>
-        <input id="admin-password-input" type="password" placeholder="Admin password" autocomplete="off" />
-        <button class="btn-primary" onclick="adminLogin()">Login</button>
-        <div id="admin-login-error" class="error-msg" style="display:none">Wrong password</div>
-        <div class="divider">First time?</div>
-        <button class="btn-secondary" id="admin-setup-btn" onclick="showScreen('admin-setup-screen')">Set up admin account</button>
+    <!-- STATS -->
+    <div class="stats-row" id="stats-row"></div>
+
+    <!-- SCHEDULE -->
+    <div class="section-block">
+      <div class="section-head">
+        <span class="section-title">Schedule</span>
+        <span class="section-hint">missed days carry over</span>
       </div>
+      <div class="card-list" id="schedule-list"></div>
     </div>
-  </div>
 
-  <!-- ── ADMIN SETUP SCREEN (first time only) ── -->
-  <div id="admin-setup-screen" class="screen">
-    <div class="center-wrap">
-      <button class="back-btn" onclick="showScreen('admin-login-screen')">← Back</button>
-      <div class="big-icon">⚙️</div>
-      <h1>Create admin</h1>
-      <p class="tagline">Set your name and a password. Keep it safe!</p>
-      <div class="landing-card">
-        <label class="field-label">Your name</label>
-        <input id="admin-name-input" type="text" placeholder="e.g. Armel" maxlength="25" autocomplete="off" />
-        <label class="field-label" style="margin-top:12px">Password</label>
-        <input id="admin-new-password" type="password" placeholder="Choose a password" autocomplete="off" />
-        <label class="field-label" style="margin-top:12px">Confirm password</label>
-        <input id="admin-confirm-password" type="password" placeholder="Confirm password" autocomplete="off" />
-        <button class="btn-primary" style="margin-top:16px" onclick="createAdmin()">Create admin account</button>
-        <div id="admin-setup-error" class="error-msg" style="display:none"></div>
+    <!-- MEMBERS -->
+    <div class="section-block">
+      <div class="section-head">
+        <span class="section-title">Members</span>
       </div>
+      <div class="card-list" id="member-list"></div>
     </div>
-  </div>
 
-  <!-- ── MEMBER MAIN SCREEN ── -->
-  <div id="member-screen" class="screen">
-    <header>
-      <div class="header-left">
-        <span class="header-icon">🍽</span>
-        <span class="header-title">Dish Duty</span>
+    <!-- HISTORY -->
+    <div class="section-block">
+      <div class="section-head">
+        <span class="section-title">History</span>
       </div>
-      <div class="header-right">
-        <div class="sync-badge">
-          <span class="sync-dot" id="sync-dot"></span>
-          <span id="sync-text">connecting</span>
-        </div>
-        <button class="header-user" id="member-header-user"></button>
-      </div>
-    </header>
-    <main>
-      <section class="hero-section">
-        <div class="hero-date" id="member-hero-date"></div>
-        <div class="hero-label">On duty today</div>
-        <div class="hero-name" id="member-hero-name">—</div>
-        <div id="member-hero-action"></div>
-      </section>
-      <section class="card-section">
-        <div class="section-title">Upcoming schedule</div>
-        <div id="member-week-list"></div>
-      </section>
-      <section class="card-section">
-        <div class="section-title">Members</div>
-        <div id="member-member-list"></div>
-      </section>
-      <section class="card-section">
-        <div class="section-title">History</div>
-        <div id="member-history-list"></div>
-      </section>
-    </main>
-  </div>
-
-  <!-- ── ADMIN MAIN SCREEN ── -->
-  <div id="admin-screen" class="screen">
-    <header>
-      <div class="header-left">
-        <span class="header-icon">🍽</span>
-        <span class="header-title">Dish Duty <span class="admin-badge">Admin</span></span>
-      </div>
-      <div class="header-right">
-        <div class="sync-badge">
-          <span class="sync-dot" id="admin-sync-dot"></span>
-          <span id="admin-sync-text">connecting</span>
-        </div>
-        <button class="header-user" onclick="adminLogout()">Logout</button>
-      </div>
-    </header>
-    <main>
-      <!-- Today -->
-      <section class="hero-section">
-        <div class="hero-date" id="admin-hero-date"></div>
-        <div class="hero-label">On duty today</div>
-        <div class="hero-name" id="admin-hero-name">—</div>
-        <div id="admin-hero-action"></div>
-      </section>
-
-      <!-- Schedule manager -->
-      <section class="card-section">
-        <div class="section-title">Schedule <span class="section-hint">tap a day to reassign</span></div>
-        <div id="admin-week-list"></div>
-      </section>
-
-      <!-- Members manager -->
-      <section class="card-section">
-        <div class="section-title">Members <span class="section-hint">joined users</span></div>
-        <div id="admin-member-list"></div>
-        <div class="add-row">
-          <input id="admin-add-name" type="text" placeholder="Add name manually…" maxlength="25" autocomplete="off" />
-          <button class="add-btn" onclick="adminAddMember()">Add</button>
-        </div>
-      </section>
-
-      <!-- History with undo -->
-      <section class="card-section">
-        <div class="section-title">History <span class="section-hint">admin can undo any</span></div>
-        <div id="admin-history-list"></div>
-      </section>
-    </main>
-  </div>
-
-  <!-- ── REASSIGN MODAL ── -->
-  <div id="reassign-modal" class="modal-overlay" style="display:none">
-    <div class="modal">
-      <div class="modal-title">Reassign turn</div>
-      <div class="modal-sub" id="reassign-date-label"></div>
-      <div id="reassign-options"></div>
-      <button class="btn-secondary" style="width:100%;margin-top:12px" onclick="closeModal()">Cancel</button>
+      <div class="card-list" id="history-list"></div>
     </div>
-  </div>
 
-  <!-- ── CHANGE PASSWORD MODAL ── -->
-  <div id="change-pw-modal" class="modal-overlay" style="display:none">
-    <div class="modal">
-      <div class="modal-title">Change admin password</div>
-      <input id="new-pw-1" type="password" placeholder="New password" style="margin-bottom:8px" />
-      <input id="new-pw-2" type="password" placeholder="Confirm new password" />
-      <div id="pw-change-error" class="error-msg" style="display:none"></div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn-primary" style="flex:1" onclick="saveNewPassword()">Save</button>
-        <button class="btn-secondary" onclick="closeModal()">Cancel</button>
-      </div>
+  </div>
+</div>
+
+<!-- PROFILE MODAL -->
+<div class="modal-overlay" id="profile-modal" style="display:none" onclick="closeProfileModal(event)">
+  <div class="modal-sheet" onclick="event.stopPropagation()">
+    <div class="modal-handle"></div>
+    <div class="modal-avatar-big" id="modal-avatar-big"></div>
+    <div class="modal-uname" id="modal-name-display"></div>
+    <div class="modal-sec-label">Avatar</div>
+    <div class="emoji-grid" id="emoji-grid"></div>
+    <div class="modal-sec-label" style="margin-top:20px">Change name</div>
+    <div class="modal-name-row">
+      <input id="modal-name-input" type="text" maxlength="25" placeholder="Your name"/>
+      <button onclick="saveName()">Save</button>
     </div>
+    <button class="btn-leave" onclick="leaveDuty()">Leave rotation</button>
   </div>
-
 </div>
 
 <div class="toast" id="toast"></div>
